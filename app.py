@@ -10,6 +10,12 @@ import hashlib
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import seaborn as sns
+import requests
+import json
+import numpy as np
+import os
+from PIL import Image
+import tempfile
 
 # Check if kaleido is available for Plotly image export
 try:
@@ -17,6 +23,210 @@ try:
     KALEIDO_AVAILABLE = True
 except ImportError:
     KALEIDO_AVAILABLE = False
+
+# ==================== PERMANENT CONFIGURATION STORAGE ====================
+CONFIG_FILE = "biometric_monitor_config.json"
+CONFIG_DIR = Path.home() / ".biometric_monitor"
+CONFIG_PATH = CONFIG_DIR / CONFIG_FILE
+
+def ensure_config_dir():
+    """Create config directory if it doesn't exist"""
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        return True
+    except Exception as e:
+        st.error(f"Could not create config directory: {e}")
+        return False
+
+def load_config():
+    """Load configuration from file"""
+    default_config = {
+        'apps_script_url': '',
+        'sheet_config': {
+            'sheet_name': 'Biometric_Device_Monitor',
+            'worksheet_name': 'Device_Data',
+            'summary_worksheet': 'Summary'
+        },
+        'auto_export_enabled': False,
+        'export_mode': 'Replace (Overwrite)',
+        'alerts_config': {
+            'inactive_threshold': 30,
+            'email_alerts': False,
+            'email_recipient': ''
+        },
+        'processing_config': {
+            'active_days': 2,
+            'date_format': 'Auto Detect'
+        },
+        'display_config': {
+            'theme': 'light',
+            'default_view': 'Dashboard',
+            'rows_per_page': 50
+        },
+        'column_mappings': {
+            'portal_columns': {},
+            'master_columns': {}
+        },
+        'app_version': '5.2',
+        'last_updated': datetime.now().isoformat()
+    }
+    
+    try:
+        if CONFIG_PATH.exists():
+            with open(CONFIG_PATH, 'r') as f:
+                saved_config = json.load(f)
+                # Merge saved config with default to ensure all keys exist
+                for key in default_config:
+                    if key not in saved_config:
+                        saved_config[key] = default_config[key]
+                    elif isinstance(default_config[key], dict):
+                        for subkey in default_config[key]:
+                            if subkey not in saved_config[key]:
+                                saved_config[key][subkey] = default_config[key][subkey]
+                return saved_config
+        else:
+            # Create default config file
+            ensure_config_dir()
+            with open(CONFIG_PATH, 'w') as f:
+                json.dump(default_config, f, indent=2)
+            return default_config
+    except Exception as e:
+        st.error(f"Error loading config: {e}")
+        return default_config
+
+def save_config(config_dict):
+    """Save configuration to file"""
+    try:
+        ensure_config_dir()
+        config_dict['last_updated'] = datetime.now().isoformat()
+        config_dict['app_version'] = '5.2'
+        with open(CONFIG_PATH, 'w') as f:
+            json.dump(config_dict, f, indent=2)
+        return True
+    except Exception as e:
+        st.error(f"Error saving config: {e}")
+        return False
+
+def reset_config_to_default():
+    """Reset configuration to default values"""
+    default_config = {
+        'apps_script_url': '',
+        'sheet_config': {
+            'sheet_name': 'Biometric_Device_Monitor',
+            'worksheet_name': 'Device_Data',
+            'summary_worksheet': 'Summary'
+        },
+        'auto_export_enabled': False,
+        'export_mode': 'Replace (Overwrite)',
+        'alerts_config': {
+            'inactive_threshold': 30,
+            'email_alerts': False,
+            'email_recipient': ''
+        },
+        'processing_config': {
+            'active_days': 2,
+            'date_format': 'Auto Detect'
+        },
+        'display_config': {
+            'theme': 'light',
+            'default_view': 'Dashboard',
+            'rows_per_page': 50
+        },
+        'column_mappings': {
+            'portal_columns': {},
+            'master_columns': {}
+        },
+        'app_version': '5.2',
+        'last_updated': datetime.now().isoformat()
+    }
+    return save_config(default_config)
+
+def export_config_to_file():
+    """Export configuration to a user-selected location"""
+    try:
+        config = load_config()
+        config_json = json.dumps(config, indent=2)
+        b64 = base64.b64encode(config_json.encode()).decode()
+        href = f'<a href="data:application/json;base64,{b64}" download="biometric_monitor_config.json">Download Configuration File</a>'
+        return href
+    except Exception as e:
+        return f"Error exporting config: {e}"
+
+def import_config_from_file(uploaded_file):
+    """Import configuration from uploaded file"""
+    try:
+        config_data = json.load(uploaded_file)
+        # Validate required keys
+        required_keys = ['apps_script_url', 'sheet_config', 'alerts_config', 'processing_config']
+        for key in required_keys:
+            if key not in config_data:
+                config_data[key] = load_config()[key]
+        return save_config(config_data), config_data
+    except Exception as e:
+        return False, f"Error importing config: {e}"
+
+# Load configuration at startup
+PERMANENT_CONFIG = load_config()
+
+# Initialize session state from permanent config
+def init_session_state_from_config():
+    """Initialize session state variables from permanent config"""
+    if 'apps_script_url' not in st.session_state:
+        st.session_state.apps_script_url = PERMANENT_CONFIG.get('apps_script_url', '')
+    
+    if 'sheet_config' not in st.session_state:
+        st.session_state.sheet_config = PERMANENT_CONFIG.get('sheet_config', {
+            'sheet_name': 'Biometric_Device_Monitor',
+            'worksheet_name': 'Device_Data',
+            'summary_worksheet': 'Summary'
+        })
+    
+    if 'auto_export_enabled' not in st.session_state:
+        st.session_state.auto_export_enabled = PERMANENT_CONFIG.get('auto_export_enabled', False)
+    
+    if 'export_mode' not in st.session_state:
+        st.session_state.export_mode = PERMANENT_CONFIG.get('export_mode', 'Replace (Overwrite)')
+    
+    if 'alerts_config' not in st.session_state:
+        st.session_state.alerts_config = PERMANENT_CONFIG.get('alerts_config', {
+            'inactive_threshold': 30,
+            'email_alerts': False,
+            'email_recipient': ''
+        })
+    
+    if 'processing_config' not in st.session_state:
+        st.session_state.processing_config = PERMANENT_CONFIG.get('processing_config', {
+            'active_days': 2,
+            'date_format': 'Auto Detect'
+        })
+    
+    if 'display_config' not in st.session_state:
+        st.session_state.display_config = PERMANENT_CONFIG.get('display_config', {
+            'theme': 'light',
+            'default_view': 'Dashboard',
+            'rows_per_page': 50
+        })
+    
+    if 'column_mappings' not in st.session_state:
+        st.session_state.column_mappings = PERMANENT_CONFIG.get('column_mappings', {
+            'portal_columns': {},
+            'master_columns': {}
+        })
+
+# Initialize other session state variables
+if 'processed_data' not in st.session_state:
+    st.session_state.processed_data = None
+if 'summary_data' not in st.session_state:
+    st.session_state.summary_data = None
+if 'processing_history' not in st.session_state:
+    st.session_state.processing_history = []
+if 'saved_reports' not in st.session_state:
+    st.session_state.saved_reports = []
+if 'google_sheet_url' not in st.session_state:
+    st.session_state.google_sheet_url = ''
+
+# Initialize from permanent config
+init_session_state_from_config()
 
 # Page configuration
 st.set_page_config(
@@ -49,100 +259,596 @@ st.markdown("""
     .metric-card:hover {
         transform: translateY(-5px);
     }
+    .config-box {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        padding: 1.5rem;
+        border-radius: 15px;
+        margin: 1rem 0;
+    }
+    .config-saved {
+        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        font-weight: bold;
+    }
+    .config-status {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        z-index: 1000;
+        background: #28a745;
+        color: white;
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-size: 12px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state
-if 'processed_data' not in st.session_state:
-    st.session_state.processed_data = None
-if 'summary_data' not in st.session_state:
-    st.session_state.summary_data = None
-if 'processing_history' not in st.session_state:
-    st.session_state.processing_history = []
-if 'alerts_config' not in st.session_state:
-    st.session_state.alerts_config = {
-        'inactive_threshold': 30,
-        'email_alerts': False,
-        'email_recipient': ''
-    }
-if 'saved_reports' not in st.session_state:
-    st.session_state.saved_reports = []
+# Display config status
+config_status = "✅ Config Loaded" if CONFIG_PATH.exists() else "🆕 Default Config"
+st.markdown(f'<div class="config-status">{config_status} | Config: {CONFIG_PATH}</div>', unsafe_allow_html=True)
 
-# Function to safely export Plotly chart as image
-def export_plotly_as_image(fig, filename, format="png", width=800, height=500, scale=2):
-    """Safely export Plotly chart as image with fallback message"""
-    if KALEIDO_AVAILABLE:
-        try:
-            img_bytes = fig.to_image(format=format, width=width, height=height, scale=scale)
-            b64 = base64.b64encode(img_bytes).decode()
-            href = f'<a href="data:image/{format};base64,{b64}" download="{filename}">Click here to download</a>'
-            return href
-        except Exception as e:
-            return f"<span style='color:red'>Error exporting image: {str(e)}</span>"
+# ==================== IMAGE EXPORT FUNCTIONALITY ====================
+
+def dataframe_to_image(df, title="Data Report", col_widths=None, font_size=10, 
+                       header_color='#667eea', row_colors=['#ffffff', '#f8f9fa'],
+                       max_rows=100, include_index=False, sort_by=None, sort_ascending=True,
+                       filters=None):
+    """Convert dataframe to matplotlib figure with customizable styling"""
+    
+    # Apply filters if provided
+    filtered_df = df.copy()
+    if filters:
+        for column, filter_value in filters.items():
+            if filter_value and column in filtered_df.columns:
+                filtered_df = filtered_df[filtered_df[column].astype(str).str.contains(filter_value, case=False, na=False)]
+    
+    # Apply sorting if provided
+    if sort_by and sort_by in filtered_df.columns:
+        filtered_df = filtered_df.sort_values(by=sort_by, ascending=sort_ascending)
+    
+    # Limit rows
+    if len(filtered_df) > max_rows:
+        filtered_df = filtered_df.head(max_rows)
+        st.warning(f"⚠️ Showing only first {max_rows} rows in image export")
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(14, min(30, len(filtered_df) * 0.3 + 2)))
+    ax.axis('tight')
+    ax.axis('off')
+    
+    # Prepare table data
+    if include_index:
+        table_data = filtered_df.reset_index()
+        columns = ['Index'] + list(filtered_df.columns)
     else:
-        return "<span style='color:orange'>⚠️ Install kaleido for image export: <code>pip install -U kaleido</code></span>"
+        table_data = filtered_df
+        columns = list(filtered_df.columns)
+    
+    # Create table
+    table = ax.table(cellText=table_data.values, colLabels=columns, 
+                     cellLoc='center', loc='center',
+                     colWidths=col_widths or [0.08] * len(columns))
+    
+    # Style the table
+    table.auto_set_font_size(False)
+    table.set_fontsize(font_size)
+    table.scale(1.2, 1.5)
+    
+    # Color header row
+    for (i, j), cell in table.get_celld().items():
+        if i == 0:
+            cell.set_facecolor(header_color)
+            cell.set_text_props(weight='bold', color='white')
+        else:
+            # Alternate row colors
+            cell.set_facecolor(row_colors[i % 2])
+    
+    # Add title
+    ax.set_title(title, fontsize=16, weight='bold', pad=20)
+    
+    plt.tight_layout()
+    return fig
 
-# Function to convert dataframe to image
-def dataframe_to_image(df, title="Data Table", max_rows=50):
-    """Convert dataframe to image using matplotlib"""
+def export_table_as_image(df, title, format='png', dpi=300, **kwargs):
+    """Export dataframe as image with various formats"""
+    fig = dataframe_to_image(df, title, **kwargs)
+    
+    # Save to bytes buffer
+    buf = io.BytesIO()
+    fig.savefig(buf, format=format, dpi=dpi, bbox_inches='tight', facecolor='white')
+    buf.seek(0)
+    plt.close(fig)
+    
+    return buf
+
+def create_image_download_button(df, table_name, **kwargs):
+    """Create download button for table image export"""
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        image_format = st.selectbox(
+            f"Format for {table_name}",
+            ['PNG', 'JPEG', 'PDF'],
+            key=f"format_{table_name}"
+        )
+    
+    with col2:
+        dpi_value = st.selectbox(
+            f"DPI for {table_name}",
+            [150, 300, 600],
+            index=1,
+            key=f"dpi_{table_name}"
+        )
+    
+    with col3:
+        max_rows_img = st.number_input(
+            f"Max rows for {table_name}",
+            min_value=10, max_value=500, value=100,
+            key=f"rows_{table_name}"
+        )
+    
+    with st.expander(f"⚙️ Customize {table_name} Image Export"):
+        col_a, col_b = st.columns(2)
+        
+        with col_a:
+            sort_column = st.selectbox(
+                "Sort by column",
+                ['None'] + list(df.columns),
+                key=f"sort_col_{table_name}"
+            )
+            sort_ascending = st.checkbox("Ascending order", True, key=f"sort_asc_{table_name}")
+            
+            include_index = st.checkbox("Include index column", False, key=f"index_{table_name}")
+            
+            header_color = st.color_picker("Header color", '#667eea', key=f"header_{table_name}")
+        
+        with col_b:
+            font_size = st.slider("Font size", 6, 14, 10, key=f"font_{table_name}")
+            
+            # Row color pickers
+            row_color1 = st.color_picker("Row color 1", '#ffffff', key=f"row1_{table_name}")
+            row_color2 = st.color_picker("Row color 2", '#f8f9fa', key=f"row2_{table_name}")
+    
+    # Filter options
+    with st.expander(f"🔍 Filter {table_name} Data"):
+        filters = {}
+        filter_cols = st.multiselect(
+            "Select columns to filter",
+            df.columns.tolist(),
+            key=f"filter_cols_{table_name}"
+        )
+        
+        for col in filter_cols:
+            filter_val = st.text_input(f"Filter {col} (contains)", key=f"filter_{table_name}_{col}")
+            if filter_val:
+                filters[col] = filter_val
+    
+    if st.button(f"📸 Export {table_name} as Image", key=f"export_img_{table_name}"):
+        with st.spinner(f"Generating {table_name} image..."):
+            sort_by = sort_column if sort_column != 'None' else None
+            
+            img_buf = export_table_as_image(
+                df,
+                title=f"{table_name} - Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                format=image_format.lower(),
+                dpi=dpi_value,
+                font_size=font_size,
+                header_color=header_color,
+                row_colors=[row_color1, row_color2],
+                max_rows=max_rows_img,
+                include_index=include_index,
+                sort_by=sort_by,
+                sort_ascending=sort_ascending,
+                filters=filters if filters else None
+            )
+            
+            # Create download button
+            file_ext = 'png' if image_format.lower() == 'png' else 'jpg' if image_format.lower() == 'jpeg' else 'pdf'
+            b64_img = base64.b64encode(img_buf.getvalue()).decode()
+            href = f'<a href="data:image/{file_ext};base64,{b64_img}" download="biometric_{table_name.lower().replace(" ", "_")}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.{file_ext}">📥 Download {table_name} Image</a>'
+            st.markdown(href, unsafe_allow_html=True)
+            st.success(f"✅ {table_name} image ready for download!")
+
+# Helper function to clean data for JSON serialization
+def clean_data_for_json(df):
+    """Replace NaN, NaT, and infinite values with None for JSON serialization"""
+    cleaned_df = df.copy()
+    cleaned_df = cleaned_df.replace({np.nan: None})
+    datetime_cols = cleaned_df.select_dtypes(include=['datetime64']).columns
+    for col in datetime_cols:
+        cleaned_df[col] = cleaned_df[col].where(pd.notna(cleaned_df[col]), None)
+        cleaned_df[col] = cleaned_df[col].apply(lambda x: x.isoformat() if x is not None else None)
+    cleaned_df = cleaned_df.replace([np.inf, -np.inf], None)
+    for col in cleaned_df.columns:
+        if cleaned_df[col].dtype == 'object':
+            cleaned_df[col] = cleaned_df[col].apply(lambda x: None if pd.isna(x) else x)
+    return cleaned_df
+
+# Google Apps Script Integration Functions
+def export_to_google_sheets_apps_script(df, sheet_name="Biometric_Data", worksheet_name="Device_Data", apps_script_url=None):
+    """Export dataframe to Google Sheets using Apps Script web app"""
     try:
-        # Limit rows for image
-        display_df = df.head(max_rows) if len(df) > max_rows else df
-        
-        # Create figure
-        fig, ax = plt.subplots(figsize=(12, min(8, len(display_df) * 0.3 + 1)))
-        ax.axis('tight')
-        ax.axis('off')
-        
-        # Create table
-        table = ax.table(cellText=display_df.values,
-                        colLabels=display_df.columns,
-                        cellLoc='left',
-                        loc='center',
-                        colWidths=[0.15] * len(display_df.columns))
-        
-        # Style the table
-        table.auto_set_font_size(False)
-        table.set_fontsize(9)
-        table.scale(1.2, 1.5)
-        
-        # Color header
-        for (i, j), cell in table.get_celld().items():
-            if i == 0:
-                cell.set_facecolor('#667eea')
-                cell.set_text_props(weight='bold', color='white')
-            elif i % 2 == 0:
-                cell.set_facecolor('#f8f9fa')
-        
-        # Add title
-        plt.title(title, fontsize=14, weight='bold', pad=20)
-        
-        # Add note if rows truncated
-        if len(df) > max_rows:
-            plt.figtext(0.5, 0.01, f"Note: Showing first {max_rows} rows out of {len(df)} total rows", 
-                       ha="center", fontsize=8, style='italic')
-        
-        # Convert to image
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=300, bbox_inches='tight', facecolor='white')
-        buf.seek(0)
-        plt.close()
-        
-        return buf
+        if not apps_script_url:
+            return False, "Apps Script URL not configured"
+        cleaned_df = clean_data_for_json(df)
+        data = {
+            'action': 'export',
+            'sheetName': sheet_name,
+            'worksheetName': worksheet_name,
+            'data': cleaned_df.to_dict('records'),
+            'columns': cleaned_df.columns.tolist(),
+            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        response = requests.post(apps_script_url, json=data, headers={'Content-Type': 'application/json'}, timeout=30)
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('success'):
+                return True, result.get('sheetUrl', apps_script_url)
+            else:
+                return False, result.get('error', 'Unknown error')
+        else:
+            return False, f"HTTP Error: {response.status_code}"
     except Exception as e:
-        st.error(f"Error creating table image: {str(e)}")
-        return None
+        return False, str(e)
 
-# Function to download image
-def get_image_download_link(img_buffer, filename="table_image.png"):
-    """Generate download link for image"""
-    b64 = base64.b64encode(img_buffer.getvalue()).decode()
-    href = f'<a href="data:image/png;base64,{b64}" download="{filename}">Download Image</a>'
-    return href
+def test_apps_script_connection(apps_script_url):
+    """Test connection to Apps Script web app"""
+    try:
+        data = {'action': 'test', 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        response = requests.post(apps_script_url, json=data, headers={'Content-Type': 'application/json'}, timeout=10)
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('success'):
+                return True, "Connection successful!"
+            else:
+                return False, result.get('error', 'Connection failed')
+        else:
+            return False, f"HTTP Error: {response.status_code}"
+    except Exception as e:
+        return False, str(e)
 
 # Title
 st.markdown('<div class="main-header">🏢 Biometric Device Monitoring System PRO</div>', unsafe_allow_html=True)
 st.markdown("---")
+
+# ==================== PERMANENT CONFIGURATION SECTION ====================
+with st.expander("⚙️ **System Configuration** (Settings are saved permanently)", expanded=False):
+    st.markdown('<div class="config-box">', unsafe_allow_html=True)
+    
+    st.markdown("### 🔧 Permanent Configuration Settings")
+    st.info(f"📁 Configuration saved at: `{CONFIG_PATH}`")
+    
+    config_tab1, config_tab2, config_tab3, config_tab4, config_tab5 = st.tabs([
+        "📊 Google Sheets", "🔧 Processing", "📧 Alerts", "🎨 Display", "💾 Backup/Restore"
+    ])
+    
+    # Tab 1: Google Sheets Configuration
+    with config_tab1:
+        st.markdown("#### 📊 Google Sheets Integration")
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            apps_script_url_input = st.text_input(
+                "Apps Script Web App URL",
+                value=st.session_state.apps_script_url,
+                placeholder="https://script.google.com/macros/s/.../exec",
+                help="Paste the URL from your deployed Apps Script web app",
+                key="config_apps_script_url"
+            )
+        
+        with col2:
+            if st.button("🔗 Test Connection", use_container_width=True, key="test_conn"):
+                if apps_script_url_input:
+                    with st.spinner("Testing connection..."):
+                        success, message = test_apps_script_connection(apps_script_url_input)
+                        if success:
+                            st.success("✅ Connected!")
+                        else:
+                            st.error(f"❌ {message}")
+                else:
+                    st.warning("Enter URL first")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            sheet_name = st.text_input("Spreadsheet Name", 
+                                       value=st.session_state.sheet_config['sheet_name'],
+                                       key="config_sheet_name")
+        with col2:
+            worksheet_name = st.text_input("Data Worksheet", 
+                                          value=st.session_state.sheet_config['worksheet_name'],
+                                          key="config_worksheet_name")
+        with col3:
+            summary_worksheet = st.text_input("Summary Worksheet", 
+                                             value=st.session_state.sheet_config['summary_worksheet'],
+                                             key="config_summary_worksheet")
+        
+        export_mode = st.radio("Export Mode", 
+                              ["Replace (Overwrite)", "Append (Add rows)"],
+                              index=0 if st.session_state.export_mode == "Replace (Overwrite)" else 1,
+                              horizontal=True,
+                              key="config_export_mode")
+        
+        auto_export = st.checkbox("Auto-export after processing", 
+                                  value=st.session_state.auto_export_enabled,
+                                  key="config_auto_export")
+        
+        # Quick setup guide
+        with st.expander("📋 **Quick Setup Guide**", expanded=False):
+            st.markdown("""
+            **3 Simple Steps:**
+            
+            1. **Create Apps Script:**
+               - Open [Google Sheets](https://sheets.new)
+               - Extensions → Apps Script
+               - Paste the code below
+               - Deploy as Web App
+            
+            2. **Get Web App URL:**
+               - Click Deploy → New Deployment
+               - Choose "Web app"
+               - Execute as: "Me"
+               - Who has access: "Anyone"
+               - Copy the URL
+            
+            3. **Paste URL Above:**
+               - Paste the URL in the field
+               - Click "Test Connection"
+               - Save Configuration (button at bottom)
+            """)
+            
+            st.code('''
+function doPost(e) {
+  try {
+    const data = JSON.parse(e.postData.contents);
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName(data.worksheetName) || 
+                ss.insertSheet(data.worksheetName);
+    
+    if (data.action === "test") {
+      return ContentService.createTextOutput(
+        JSON.stringify({success: true})
+      ).setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    if (data.action === "export") {
+      sheet.clear();
+      const headers = data.columns;
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      
+      const rows = data.data.map(row => 
+        headers.map(h => row[h] !== null ? row[h] : ""));
+      if (rows.length > 0) {
+        sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+      }
+      
+      sheet.getRange(1, 1, 1, headers.length)
+        .setFontWeight("bold").setBackground("#667eea").setFontColor("white");
+      sheet.autoResizeColumns(1, headers.length);
+      
+      return ContentService.createTextOutput(
+        JSON.stringify({success: true, sheetUrl: ss.getUrl()})
+      ).setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    if (data.action === "append") {
+      const lastRow = sheet.getLastRow();
+      let headers;
+      
+      if (lastRow === 0) {
+        headers = data.columns;
+        sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+        sheet.getRange(1, 1, 1, headers.length)
+          .setFontWeight("bold").setBackground("#667eea").setFontColor("white");
+      } else {
+        headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      }
+      
+      const rows = data.data.map(row => 
+        headers.map(h => row[h] !== null ? row[h] : ""));
+      
+      if (rows.length > 0) {
+        sheet.getRange(lastRow + 1, 1, rows.length, headers.length).setValues(rows);
+      }
+      
+      return ContentService.createTextOutput(
+        JSON.stringify({success: true, sheetUrl: ss.getUrl()})
+      ).setMimeType(ContentService.MimeType.JSON);
+    }
+  } catch(error) {
+    return ContentService.createTextOutput(
+      JSON.stringify({success: false, error: error.toString()})
+    ).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function doGet(e) {
+  return ContentService.createTextOutput(
+    JSON.stringify({success: true, message: "Apps Script is running"})
+  ).setMimeType(ContentService.MimeType.JSON);
+}
+            ''', language='javascript')
+    
+    # Tab 2: Processing Configuration
+    with config_tab2:
+        st.markdown("#### 🔧 Processing Settings")
+        
+        active_days = st.number_input("Active Days Threshold", 
+                                      min_value=1, max_value=30, 
+                                      value=st.session_state.processing_config.get('active_days', 2),
+                                      help="Devices active within this many days are marked as 'Active'",
+                                      key="config_active_days")
+        
+        date_format = st.selectbox("Date Format in Excel", 
+                                  ["Auto Detect", "YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY"],
+                                  index=["Auto Detect", "YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY"].index(
+                                      st.session_state.processing_config.get('date_format', 'Auto Detect')
+                                  ),
+                                  key="config_date_format")
+        
+        st.markdown("#### 📋 Status Rules")
+        st.info(f"""
+        **Current Rules:**
+        - Ward NULL → Status = Zone/Area value
+        - Days ≤ {active_days} & Zone ≠ 'Not Authorized' → ✅ Active  
+        - Days > {active_days} & Zone ≠ 'Not Authorized' → ⚠️ Inactive
+        - Zone/Area = 'Not Authorized' → Not authorized
+        """)
+        
+        st.markdown("#### 📁 Column Mappings (Advanced)")
+        with st.expander("Customize Column Mappings", expanded=False):
+            st.markdown("**Device Export File Columns:**")
+            portal_cols = st.text_area("Portal columns (JSON format)", 
+                                       value=json.dumps(st.session_state.column_mappings.get('portal_columns', {}), indent=2),
+                                       height=100,
+                                       key="config_portal_cols")
+            
+            st.markdown("**Master File Columns:**")
+            master_cols = st.text_area("Master columns (JSON format)", 
+                                       value=json.dumps(st.session_state.column_mappings.get('master_columns', {}), indent=2),
+                                       height=100,
+                                       key="config_master_cols")
+    
+    # Tab 3: Alerts Configuration
+    with config_tab3:
+        st.markdown("#### 📧 Alert Settings")
+        
+        inactive_threshold = st.slider(
+            "Inactive Alert Threshold (days)", 
+            min_value=7, max_value=90, 
+            value=st.session_state.alerts_config.get('inactive_threshold', 30),
+            key="config_inactive_threshold"
+        )
+        
+        email_alerts = st.checkbox(
+            "Enable Email Alerts", 
+            value=st.session_state.alerts_config.get('email_alerts', False),
+            key="config_email_alerts"
+        )
+        
+        email_recipient = ""
+        if email_alerts:
+            email_recipient = st.text_input(
+                "Alert Email Address",
+                value=st.session_state.alerts_config.get('email_recipient', ''),
+                key="config_email_recipient"
+            )
+        
+        st.markdown("#### 🔔 Alert Conditions")
+        st.markdown(f"""
+        - **Inactive Alert**: Triggered when devices are inactive for more than **{inactive_threshold} days**
+        - **Email Notifications**: {'✅ Enabled' if email_alerts else '❌ Disabled'}
+        """)
+    
+    # Tab 4: Display Configuration
+    with config_tab4:
+        st.markdown("#### 🎨 Display Settings")
+        
+        theme = st.selectbox("Theme", 
+                            ["Light", "Dark"],
+                            index=0 if st.session_state.display_config.get('theme', 'light') == 'light' else 1,
+                            key="config_theme")
+        
+        default_view = st.selectbox("Default View", 
+                                   ["Dashboard", "Device Data", "Analytics", "History"],
+                                   index=["Dashboard", "Device Data", "Analytics", "History"].index(
+                                       st.session_state.display_config.get('default_view', 'Dashboard')
+                                   ),
+                                   key="config_default_view")
+        
+        rows_per_page = st.number_input("Rows per page", 
+                                       min_value=10, max_value=500, 
+                                       value=st.session_state.display_config.get('rows_per_page', 50),
+                                       step=10,
+                                       key="config_rows_per_page")
+    
+    # Tab 5: Backup/Restore
+    with config_tab5:
+        st.markdown("#### 💾 Configuration Backup & Restore")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Export Configuration**")
+            if st.button("📤 Export Config to File", use_container_width=True):
+                href = export_config_to_file()
+                st.markdown(href, unsafe_allow_html=True)
+                st.success("Click the link above to download your configuration file")
+        
+        with col2:
+            st.markdown("**Import Configuration**")
+            uploaded_config = st.file_uploader("Upload config file", type=['json'], key="config_upload")
+            if uploaded_config is not None:
+                if st.button("📥 Import Configuration", use_container_width=True):
+                    success, result = import_config_from_file(uploaded_config)
+                    if success:
+                        st.success("✅ Configuration imported successfully!")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {result}")
+        
+        st.markdown("---")
+        st.markdown("**Reset Configuration**")
+        if st.button("🔄 Reset to Default Settings", use_container_width=True, type="secondary"):
+            if reset_config_to_default():
+                st.success("✅ Configuration reset to defaults!")
+                st.rerun()
+    
+    # Save Configuration Button
+    st.markdown("---")
+    col1, col2, col3 = st.columns([2, 1, 2])
+    with col2:
+        if st.button("💾 **SAVE ALL CONFIGURATION**", type="primary", use_container_width=True):
+            # Build config dictionary
+            new_config = {
+                'apps_script_url': apps_script_url_input,
+                'sheet_config': {
+                    'sheet_name': sheet_name,
+                    'worksheet_name': worksheet_name,
+                    'summary_worksheet': summary_worksheet
+                },
+                'auto_export_enabled': auto_export,
+                'export_mode': export_mode,
+                'alerts_config': {
+                    'inactive_threshold': inactive_threshold,
+                    'email_alerts': email_alerts,
+                    'email_recipient': email_recipient if email_alerts else ''
+                },
+                'processing_config': {
+                    'active_days': active_days,
+                    'date_format': date_format
+                },
+                'display_config': {
+                    'theme': theme.lower(),
+                    'default_view': default_view,
+                    'rows_per_page': rows_per_page
+                },
+                'column_mappings': {
+                    'portal_columns': json.loads(portal_cols) if portal_cols else {},
+                    'master_columns': json.loads(master_cols) if master_cols else {}
+                }
+            }
+            
+            # Save to file
+            if save_config(new_config):
+                # Update session state
+                st.session_state.apps_script_url = new_config['apps_script_url']
+                st.session_state.sheet_config = new_config['sheet_config']
+                st.session_state.auto_export_enabled = new_config['auto_export_enabled']
+                st.session_state.export_mode = new_config['export_mode']
+                st.session_state.alerts_config = new_config['alerts_config']
+                st.session_state.processing_config = new_config['processing_config']
+                st.session_state.display_config = new_config['display_config']
+                st.session_state.column_mappings = new_config['column_mappings']
+                
+                st.success("✅ Configuration saved permanently!")
+                st.balloons()
+                st.info(f"Configuration saved to: `{CONFIG_PATH}`")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # Sidebar
 with st.sidebar:
@@ -162,31 +868,15 @@ with st.sidebar:
     
     st.markdown("---")
     
-    with st.expander("⚙️ **Advanced Settings**", expanded=False):
-        active_days = st.number_input("Active Days Threshold", min_value=1, max_value=30, value=1)
-        st.session_state.alerts_config['inactive_threshold'] = st.slider(
-            "Inactive Alert Threshold (days)", 
-            min_value=7, max_value=90, value=30
-        )
-    
     process_button = st.button("🚀 **Process Data**", type="primary", use_container_width=True)
     
     st.markdown("---")
     
-    with st.expander("📋 **Status Rules**", expanded=False):
-        st.markdown(f"""
-        1. **Ward NULL** → Status = Zone/Area value
-        2. **Days ≤ {active_days} & Zone/Area ≠ 'Not Authorized'** → ✅ Active
-        3. **Days > {active_days} & Zone/Area ≠ 'Not Authorized'** → ⚠️ Inactive
-        4. **Zone/Area = 'Not Authorized'** → Not authorized
-        """)
-    
     # Export Section
     if st.session_state.processed_data is not None:
-        st.markdown("---")
-        st.header("📥 Export Options")
+        st.header("📥 Quick Export")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
             if st.button("📄 CSV", use_container_width=True):
                 csv = st.session_state.processed_data.to_csv(index=False)
@@ -206,12 +896,22 @@ with st.sidebar:
                 href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="biometric_report.xlsx">Download Excel</a>'
                 st.markdown(href, unsafe_allow_html=True)
         
-        with col3:
-            if st.button("🖼️ Download Table as Image", use_container_width=True):
-                img_buffer = dataframe_to_image(st.session_state.processed_data, "Biometric Devices Report")
-                if img_buffer:
-                    href = get_image_download_link(img_buffer, "biometric_report.png")
-                    st.markdown(href, unsafe_allow_html=True)
+        # Quick Google Sheets Export
+        if st.session_state.apps_script_url:
+            if st.button("📤 Export to Google Sheets", use_container_width=True):
+                with st.spinner("Exporting..."):
+                    success, result = export_to_google_sheets_apps_script(
+                        st.session_state.processed_data,
+                        st.session_state.sheet_config['sheet_name'],
+                        st.session_state.sheet_config['worksheet_name'],
+                        st.session_state.apps_script_url
+                    )
+                    if success:
+                        st.session_state.google_sheet_url = result
+                        st.success("✅ Exported!")
+                        st.markdown(f"[📊 Open Sheet]({result})")
+                    else:
+                        st.error(f"❌ {result}")
 
 # Processing function
 def process_biometric_data(portal_file, master_file, active_threshold=2):
@@ -229,15 +929,8 @@ def process_biometric_data(portal_file, master_file, active_threshold=2):
             st.write(list(portal_df.columns))
             st.markdown("**Biometric Master File Columns Found:**")
             st.write(list(master_df.columns))
-            
-            # Show sample data
-            st.markdown("**Sample Device Export Data (First 3 rows):**")
-            st.dataframe(portal_df.head(3))
-            st.markdown("**Sample Master Data (First 3 rows):**")
-            st.dataframe(master_df.head(3))
         
         # Rename columns to standard names for processing
-        # Device Export File column mapping
         portal_column_map = {}
         for col in portal_df.columns:
             if col == 'Serial Number':
@@ -251,7 +944,6 @@ def process_biometric_data(portal_file, master_file, active_threshold=2):
             elif col == 'Last Activity':
                 portal_column_map[col] = 'Last Activity'
         
-        # Biometric Master File column mapping
         master_column_map = {}
         for col in master_df.columns:
             if col == 'Serial Number':
@@ -303,8 +995,7 @@ def process_biometric_data(portal_file, master_file, active_threshold=2):
             merged['Days Inactive'] = (max_date - merged['Last Activity Date']).dt.days
             merged['Days Inactive'] = merged['Days Inactive'].fillna(0)
         
-        # Fill missing values in important columns
-        # For Device Name - prioritize master file Device Name, fallback to portal file
+        # Fill missing values
         if 'Device Name Master' in merged.columns:
             merged['Device Name'] = merged['Device Name Master'].fillna('Not Available')
         elif 'Device Name' in merged.columns:
@@ -312,7 +1003,6 @@ def process_biometric_data(portal_file, master_file, active_threshold=2):
         else:
             merged['Device Name'] = 'Not Available'
         
-        # For other columns
         if 'Device IP' not in merged.columns:
             merged['Device IP'] = 'Not Available'
         else:
@@ -328,7 +1018,6 @@ def process_biometric_data(portal_file, master_file, active_threshold=2):
         else:
             merged['Near Facility'] = merged['Near Facility'].fillna('Not Available')
         
-        # Handle Zone/Area - use Zone from master or Area from portal
         if 'Zone' in merged.columns:
             merged['Area'] = merged['Zone'].fillna('Not Available')
         elif 'Area' in merged.columns:
@@ -372,18 +1061,16 @@ def process_biometric_data(portal_file, master_file, active_threshold=2):
         summary.columns = ['Status', 'Count']
         summary['Percentage'] = (summary['Count'] / summary['Count'].sum() * 100).round(1)
         
-        # Define display columns in desired order
+        # Define display columns
         display_cols = ['Serial Number', 'Near Facility', 'Device Name', 'Device IP', 'Area', 'Ward', 'Bio Metric Type', 'Days Inactive', 'Status', 'Last Activity']
         
-        # Ensure all columns exist
         for col in display_cols:
             if col not in merged.columns:
                 merged[col] = 'Not Available'
         
-        # Create result dataframe
         result_df = merged[display_cols].copy()
         
-        # Sort by status (Active first, then Inactive, then Not authorized)
+        # Sort by status
         status_order = {'✅ Active': 0, '⚠️ Inactive': 1, 'Not authorized': 2}
         result_df['Status Order'] = result_df['Status'].map(status_order).fillna(3)
         result_df = result_df.sort_values('Status Order').drop('Status Order', axis=1)
@@ -391,17 +1078,7 @@ def process_biometric_data(portal_file, master_file, active_threshold=2):
         # Add processed timestamp
         result_df['Processed'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # Show column mapping success
         st.success(f"✅ Processing complete! Found {len(result_df)} devices")
-        
-        # Show data quality in sidebar
-        with st.sidebar:
-            with st.expander("📊 Data Quality Report", expanded=False):
-                for col in ['Serial Number', 'Device Name', 'Device IP', 'Near Facility', 'Area', 'Ward', 'Bio Metric Type']:
-                    if col in result_df.columns:
-                        non_na = result_df[col][result_df[col] != 'Not Available'].count()
-                        pct = (non_na/len(result_df)*100) if len(result_df) > 0 else 0
-                        st.write(f"**{col}:** {non_na}/{len(result_df)} ({pct:.1f}%)")
         
         return result_df, summary
         
@@ -417,7 +1094,8 @@ if process_button:
         st.warning("⚠️ Please upload both files!")
     else:
         with st.spinner("🔄 Processing..."):
-            processed_df, summary_df = process_biometric_data(portal_file, master_file, active_days)
+            active_days_val = st.session_state.processing_config.get('active_days', 2)
+            processed_df, summary_df = process_biometric_data(portal_file, master_file, active_days_val)
             
             if processed_df is not None:
                 st.session_state.processed_data = processed_df
@@ -432,6 +1110,21 @@ if process_button:
                     'blocked_count': len(processed_df[processed_df['Status'] == 'Not authorized'])
                 })
                 
+                # Auto-export to Google Sheets if enabled
+                if st.session_state.auto_export_enabled and st.session_state.apps_script_url:
+                    with st.spinner("Auto-exporting to Google Sheets..."):
+                        success, result = export_to_google_sheets_apps_script(
+                            processed_df,
+                            st.session_state.sheet_config['sheet_name'],
+                            st.session_state.sheet_config['worksheet_name'],
+                            st.session_state.apps_script_url
+                        )
+                        if success:
+                            st.session_state.google_sheet_url = result
+                            st.success("✅ Auto-exported to Google Sheets!")
+                        else:
+                            st.warning(f"⚠️ Auto-export failed: {result}")
+                
                 # Alert check
                 inactive_devices = processed_df[processed_df['Status'] == '⚠️ Inactive']
                 long_inactive = inactive_devices[inactive_devices['Days Inactive'] > st.session_state.alerts_config['inactive_threshold']]
@@ -442,19 +1135,15 @@ if process_button:
                 st.success("✅ Processing complete!")
                 st.balloons()
 
-# Show kaleido warning if needed
-if not KALEIDO_AVAILABLE and st.session_state.processed_data is not None:
-    st.info("💡 **Tip:** Install 'kaleido' package to enable Plotly chart image exports: `pip install -U kaleido`")
-
-# Main content - ALL TABS WORKING
+# Main content tabs
 if st.session_state.processed_data is not None:
     df = st.session_state.processed_data
     summary = st.session_state.summary_data
     
-    # Create ALL 5 tabs
+    # Create tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Dashboard", "📋 Device Data", "📈 Analytics", "📜 History", "💾 Saved Reports"])
     
-    # ==================== TAB 1: DASHBOARD ====================
+    # Tab 1: Dashboard
     with tab1:
         # KPI Cards
         col1, col2, col3, col4 = st.columns(4)
@@ -491,14 +1180,10 @@ if st.session_state.processed_data is not None:
             fig1.update_layout(height=400)
             st.plotly_chart(fig1, use_container_width=True)
             
-            # Download chart as image button
-            if st.button("📸 Download Chart as Image", key="download_pie"):
-                href = export_plotly_as_image(fig1, "status_distribution.png", width=800, height=500)
-                st.markdown(href, unsafe_allow_html=True)
+           
         
         with col2:
             st.subheader("Inactive Days Distribution")
-            # Create days groups
             df['Days Group'] = pd.cut(df['Days Inactive'], bins=[-1, 0, 2, 7, 30, 90, float('inf')],
                                        labels=['0', '1-2', '3-7', '8-30', '31-90', '90+'])
             days_dist = df['Days Group'].value_counts().reset_index()
@@ -507,6 +1192,8 @@ if st.session_state.processed_data is not None:
                           color='Count', color_continuous_scale='Viridis')
             fig2.update_layout(height=400)
             st.plotly_chart(fig2, use_container_width=True)
+            
+            
         
         # Additional metrics
         st.markdown("---")
@@ -520,8 +1207,22 @@ if st.session_state.processed_data is not None:
         with col3:
             compliance_rate = (active_count / total_devices * 100) if total_devices > 0 else 0
             st.metric("✅ Compliance Rate", f"{compliance_rate:.1f}%")
+        
+        # Dashboard Table Export
+        st.markdown("---")
+        st.subheader("📸 Export Dashboard Data as Image")
+        
+        # Create summary table for dashboard export
+        dashboard_summary = pd.DataFrame({
+            'Metric': ['Total Devices', 'Active Devices', 'Inactive Devices', 'Not Authorized Devices',
+                      'Compliance Rate', 'Average Inactive Days', 'Max Inactive Days'],
+            'Value': [total_devices, active_count, inactive_count, not_authorized_count,
+                     f"{compliance_rate:.1f}%", f"{avg_inactive:.1f}", max_inactive]
+        })
+        
+        create_image_download_button(dashboard_summary, "Dashboard Summary", max_rows_img=50)
     
-    # ==================== TAB 2: DEVICE DATA ====================
+    # Tab 2: Device Data
     with tab2:
         st.subheader("Detailed Device Data")
         
@@ -529,16 +1230,14 @@ if st.session_state.processed_data is not None:
         col1, col2, col3 = st.columns(3)
         with col1:
             status_filter = st.multiselect("Filter by Status", options=df['Status'].unique(), 
-                                           default=df['Status'].unique(), key="filter1")
+                                           default=df['Status'].unique())
         with col2:
             if 'Area' in df.columns:
                 area_options = [x for x in df['Area'].unique() if x not in ['Not Available', 'Unknown']]
                 if area_options:
-                    area_filter = st.multiselect("Filter by Area/Zone", options=area_options, 
-                                                 default=area_options, key="filter2")
+                    area_filter = st.multiselect("Filter by Area/Zone", options=area_options, default=area_options)
                 else:
                     area_filter = []
-                    st.info("No Area/Zone data available")
             else:
                 area_filter = []
         with col3:
@@ -551,7 +1250,7 @@ if st.session_state.processed_data is not None:
         if search:
             filtered_df = filtered_df[filtered_df['Serial Number'].astype(str).str.contains(search, case=False)]
         
-        # Color coding function
+        # Color coding
         def color_status(val):
             if '✅' in str(val):
                 return 'background-color: #90EE90'
@@ -565,44 +1264,29 @@ if st.session_state.processed_data is not None:
         st.dataframe(styled_df, use_container_width=True, height=500)
         st.caption(f"Showing {len(filtered_df)} of {len(df)} records")
         
-        # Export options for filtered data
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("📥 Export Filtered CSV"):
-                csv = filtered_df.to_csv(index=False)
-                b64 = base64.b64encode(csv.encode()).decode()
-                href = f'<a href="data:file/csv;base64,{b64}" download="filtered_data.csv">Download CSV</a>'
-                st.markdown(href, unsafe_allow_html=True)
-        
-        with col2:
-            if st.button("🖼️ Download Table as Image", key="download_table_image"):
-                img_buffer = dataframe_to_image(filtered_df, f"Filtered Biometric Data - {len(filtered_df)} Records")
-                if img_buffer:
-                    href = get_image_download_link(img_buffer, "filtered_biometric_data.png")
-                    st.markdown(href, unsafe_allow_html=True)
+        # Export filtered data as image
+        st.markdown("---")
+        st.subheader("📸 Export Filtered Device Data as Image")
+        create_image_download_button(filtered_df, "Filtered Device Data", max_rows_img=200)
         
         # Top inactive devices
         st.markdown("---")
-        st.subheader("⚠️ Inactive Devices (⚠️ Inactive Status Only)")
+        st.subheader("⚠️ Top Inactive Devices")
         
-        # Filter only devices with status '⚠️ Inactive'
         inactive_only_df = df[df['Status'] == '⚠️ Inactive']
         
         if len(inactive_only_df) > 0:
             top_inactive = inactive_only_df.nlargest(100, 'Days Inactive')[['Serial Number', 'Device Name', 'Near Facility', 'Area', 'Device IP', 'Days Inactive', 'Status']]
             st.dataframe(top_inactive, use_container_width=True)
-            st.caption(f"Showing {len(top_inactive)} inactive devices out of {len(inactive_only_df)} total inactive devices")
             
-            # Download inactive devices table as image
-            if st.button("🖼️ Download Inactive Devices Table as Image"):
-                img_buffer = dataframe_to_image(top_inactive, f"Inactive Devices Report - {len(top_inactive)} Devices")
-                if img_buffer:
-                    href = get_image_download_link(img_buffer, "inactive_devices.png")
-                    st.markdown(href, unsafe_allow_html=True)
+            # Export top inactive as image
+            st.markdown("---")
+            st.subheader("📸 Export Top Inactive Devices as Image")
+            create_image_download_button(top_inactive, "Top Inactive Devices", max_rows_img=100)
         else:
             st.info("No inactive devices found!")
     
-    # ==================== TAB 3: ANALYTICS ====================
+    # Tab 3: Analytics
     with tab3:
         st.subheader("Advanced Analytics")
         
@@ -611,18 +1295,19 @@ if st.session_state.processed_data is not None:
         with col1:
             st.markdown("#### Status by Near Facility")
             if 'Near Facility' in df.columns and len(df['Near Facility'].unique()) > 1:
-                # Filter out 'Not Available' for better visualization
                 plot_df = df[df['Near Facility'] != 'Not Available']
                 if len(plot_df) > 0:
                     area_status = pd.crosstab(plot_df['Near Facility'], plot_df['Status'])
                     fig3 = px.imshow(area_status, text_auto=True, aspect="auto", 
                                      title="Heatmap: Status by Near Facility", color_continuous_scale='Viridis')
-                    fig3.update_layout(height=1500)
+                    fig3.update_layout(height=500)
                     st.plotly_chart(fig3, use_container_width=True)
-                else:
-                    st.info("No valid Near Facility data for heatmap")
-            else:
-                st.info("Insufficient Near Facility data for heatmap visualization")
+                    
+                    
+                    # Export crosstab data as image
+                    st.markdown("---")
+                    st.subheader("📸 Export Status by Near Facility Table")
+                    create_image_download_button(area_status.reset_index(), "Status_by_Near_Facility")
         
         with col2:
             st.markdown("#### Status by Bio Metric Type")
@@ -633,22 +1318,13 @@ if st.session_state.processed_data is not None:
                     fig4 = px.bar(bio_status, title='Status Distribution by Bio Metric Type', barmode='group')
                     fig4.update_layout(height=500)
                     st.plotly_chart(fig4, use_container_width=True)
-                else:
-                    st.info("No valid Bio Metric Type data")
-            else:
-                st.info("Insufficient Bio Metric Type data")
-        
-        # Cumulative distribution
-        st.markdown("#### Cumulative Distribution of Inactive Days")
-        df_sorted = df.sort_values('Days Inactive')
-        df_sorted['Cumulative %'] = (df_sorted.index + 1) / len(df_sorted) * 100
-        
-        fig5 = px.line(df_sorted, x='Days Inactive', y='Cumulative %', 
-                       title='Cumulative Distribution of Inactive Days')
-        fig5.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="80%")
-        fig5.add_hline(y=95, line_dash="dash", line_color="orange", annotation_text="95%")
-        fig5.update_layout(height=400)
-        st.plotly_chart(fig5, use_container_width=True)
+                    
+                
+                    
+                    # Export crosstab data as image
+                    st.markdown("---")
+                    st.subheader("📸 Export Status by Bio Metric Type Table")
+                    create_image_download_button(bio_status.reset_index(), "Status_by_Bio_Metric")
         
         # Statistics table
         st.markdown("#### Statistical Summary")
@@ -665,117 +1341,46 @@ if st.session_state.processed_data is not None:
         })
         st.dataframe(stats_df, use_container_width=True)
         
-        # Download statistics table as image
-        if st.button("🖼️ Download Statistics Table as Image"):
-            img_buffer = dataframe_to_image(stats_df, "Statistical Summary")
-            if img_buffer:
-                href = get_image_download_link(img_buffer, "statistics_summary.png")
-                st.markdown(href, unsafe_allow_html=True)
+        # Export stats as image
+        st.markdown("---")
+        st.subheader("📸 Export Statistical Summary as Image")
+        create_image_download_button(stats_df, "Statistical_Summary")
     
-    # ==================== TAB 4: HISTORY ====================
+    # Tab 4: History
     with tab4:
         st.subheader("Processing History")
-        
         if st.session_state.processing_history:
             history_df = pd.DataFrame(st.session_state.processing_history)
             history_df['timestamp'] = pd.to_datetime(history_df['timestamp'])
             history_df = history_df.sort_values('timestamp', ascending=False)
-            
             display_history = history_df[['timestamp', 'file_name', 'total_devices', 'active_count', 'inactive_count', 'blocked_count']].copy()
             display_history.columns = ['Date & Time', 'File Name', 'Total', 'Active', 'Inactive', 'Not authorized']
             st.dataframe(display_history, use_container_width=True)
             
-            # Download history table as image
-            if st.button("🖼️ Download History Table as Image"):
-                img_buffer = dataframe_to_image(display_history, "Processing History Report")
-                if img_buffer:
-                    href = get_image_download_link(img_buffer, "processing_history.png")
-                    st.markdown(href, unsafe_allow_html=True)
-            
-            # Compare reports
-            if len(st.session_state.processing_history) >= 2:
-                st.markdown("---")
-                st.subheader("Compare Reports")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    idx1 = st.selectbox("First Report", range(len(st.session_state.processing_history)), 
-                                        format_func=lambda x: st.session_state.processing_history[x]['timestamp'].strftime('%Y-%m-%d %H:%M'))
-                with col2:
-                    idx2 = st.selectbox("Second Report", range(len(st.session_state.processing_history)), 
-                                        format_func=lambda x: st.session_state.processing_history[x]['timestamp'].strftime('%Y-%m-%d %H:%M'),
-                                        index=min(1, len(st.session_state.processing_history)-1))
-                
-                if idx1 != idx2:
-                    r1 = st.session_state.processing_history[idx1]
-                    r2 = st.session_state.processing_history[idx2]
-                    
-                    comparison = pd.DataFrame({
-                        'Metric': ['Total', 'Active', 'Inactive', 'Not authorized'],
-                        r1['timestamp'].strftime('%Y-%m-%d'): [r1['total_devices'], r1['active_count'], r1['inactive_count'], r1['blocked_count']],
-                        r2['timestamp'].strftime('%Y-%m-%d'): [r2['total_devices'], r2['active_count'], r2['inactive_count'], r2['blocked_count']],
-                        'Change': [
-                            r2['total_devices'] - r1['total_devices'],
-                            r2['active_count'] - r1['active_count'],
-                            r2['inactive_count'] - r1['inactive_count'],
-                            r2['blocked_count'] - r1['blocked_count']
-                        ]
-                    })
-                    st.dataframe(comparison, use_container_width=True)
-                    
-                    # Download comparison table as image
-                    if st.button("🖼️ Download Comparison Table as Image"):
-                        img_buffer = dataframe_to_image(comparison, "Report Comparison")
-                        if img_buffer:
-                            href = get_image_download_link(img_buffer, "report_comparison.png")
-                            st.markdown(href, unsafe_allow_html=True)
+            # Export history as image
+            st.markdown("---")
+            st.subheader("📸 Export Processing History as Image")
+            create_image_download_button(display_history, "Processing_History", max_rows_img=100)
         else:
-            st.info("No processing history yet. Process some data to see history here!")
+            st.info("No processing history yet.")
     
-    # ==================== TAB 5: SAVED REPORTS ====================
+    # Tab 5: Saved Reports
     with tab5:
         st.subheader("Saved Reports")
-        
-        # Save current report button
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("💾 Save Current Report", use_container_width=True):
-                report_name = f"Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                st.session_state.saved_reports.append({
-                    'name': report_name,
-                    'date': datetime.now(),
-                    'data': st.session_state.processed_data.copy(),
-                    'summary': st.session_state.summary_data.copy() if st.session_state.summary_data is not None else None
-                })
-                st.success(f"Report '{report_name}' saved!")
-                st.rerun()
-        
-        with col2:
-            if st.session_state.processed_data is not None:
-                if st.button("🖼️ Download Current Report as Image", use_container_width=True):
-                    img_buffer = dataframe_to_image(st.session_state.processed_data, f"Biometric Report {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-                    if img_buffer:
-                        href = get_image_download_link(img_buffer, f"biometric_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
-                        st.markdown(href, unsafe_allow_html=True)
-        
-        st.markdown("---")
+        if st.button("💾 Save Current Report", use_container_width=True):
+            report_name = f"Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            st.session_state.saved_reports.append({
+                'name': report_name,
+                'date': datetime.now(),
+                'data': st.session_state.processed_data.copy(),
+                'summary': st.session_state.summary_data.copy() if st.session_state.summary_data is not None else None
+            })
+            st.success(f"Report '{report_name}' saved!")
+            st.rerun()
         
         if st.session_state.saved_reports:
             for idx, report in enumerate(reversed(st.session_state.saved_reports)):
                 with st.expander(f"📄 {report['name']} - {report['date'].strftime('%Y-%m-%d %H:%M:%S')}"):
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Total Devices", len(report['data']))
-                    with col2:
-                        active = len(report['data'][report['data']['Status'] == '✅ Active'])
-                        st.metric("Active", active)
-                    with col3:
-                        inactive = len(report['data'][report['data']['Status'] == '⚠️ Inactive'])
-                        st.metric("Inactive", inactive)
-                    with col4:
-                        not_auth = len(report['data'][report['data']['Status'] == 'Not authorized'])
-                        st.metric("Not authorized", not_auth)
-                    
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         if st.button(f"📊 Load Report", key=f"load_{idx}"):
@@ -784,11 +1389,8 @@ if st.session_state.processed_data is not None:
                             st.success("Report loaded!")
                             st.rerun()
                     with col2:
-                        if st.button(f"🖼️ Download as Image", key=f"img_{idx}"):
-                            img_buffer = dataframe_to_image(report['data'], f"{report['name']}")
-                            if img_buffer:
-                                href = get_image_download_link(img_buffer, f"{report['name']}.png")
-                                st.markdown(href, unsafe_allow_html=True)
+                        if st.button(f"📸 Export as Image", key=f"export_img_{idx}"):
+                            create_image_download_button(report['data'], f"Saved_Report_{report['name']}")
                     with col3:
                         if st.button(f"🗑️ Delete Report", key=f"del_{idx}"):
                             st.session_state.saved_reports.pop(len(st.session_state.saved_reports) - 1 - idx)
@@ -798,43 +1400,37 @@ if st.session_state.processed_data is not None:
 
 else:
     # Welcome screen
-    st.info("""
+    st.info(f"""
     ### 👋 Welcome to Biometric Device Monitoring System PRO!
     
-    **File Requirements:**
+    **Configuration Status:** {'✅ Loaded from ' + str(CONFIG_PATH) if CONFIG_PATH.exists() else '🆕 Using default settings'}
     
-    **Device Export File** should contain:
-    - Serial Number
-    - Device Name
-    - Area
-    - Device IP
-    - Last Activity
+    **Quick Start:**
+    1. Configure settings in the **System Configuration** expander above
+    2. Upload both Excel files in the sidebar
+    3. Click **Process Data** button
+    4. Explore the interactive dashboard!
     
-    **Biometric Master File** should contain:
-    - Serial Number
-    - Bio Metric Type
-    - Zone
-    - Ward
-    - Device Name
-    - Near Facility
-    
-    **Get started:**
-    1. Upload both Excel files
-    2. Click **Process Data** button
-    3. Explore the interactive dashboard!
+    **New Image Export Features:**
+    - 📸 Export any table as PNG/JPEG/PDF
+    - 🎨 Customize colors, fonts, and styling
+    - 🔍 Apply filters before export
+    - 📊 Sort data by any column
+    - 🖼️ Export charts as high-quality images
     
     **Features:**
-    - ✅ Interactive Dashboard with KPI cards
-    - 📋 Sortable and filterable device data
-    - 📈 Advanced analytics and trends
-    - 📜 Processing history with comparisons
+    - ⚙️ **Permanent Configuration**: Settings are saved to `{CONFIG_PATH}`
+    - 📊 Google Sheets integration with Apps Script
+    - 📈 Interactive dashboard and analytics
     - 💾 Save and load reports
     - 📥 Export to CSV/Excel/Images
+    
+    **Configuration is automatically saved and persists across refreshes!**
     """)
 
 # Footer
 st.markdown("---")
 st.markdown(
-    f"<p style='text-align: center; color: gray;'>🏢 Biometric Device Monitor PRO | v4.0 | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>",
+    f"<p style='text-align: center; color: gray;'>🏢 Biometric Device Monitor PRO | v5.2 (Permanent Config + Image Export) | Config: {CONFIG_PATH} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>",
     unsafe_allow_html=True
 )
