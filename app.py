@@ -1367,7 +1367,7 @@ if st.session_state.processed_data is not None:
         inactive_only_df = df[df['Status'] == '⚠️ Inactive']
         
         if len(inactive_only_df) > 0:
-            top_inactive = inactive_only_df.nlargest(100, 'Days Inactive')[['Serial Number', 'Device Name', 'Near Facility', 'Area', 'Device IP', 'Days Inactive', 'Status']]
+            top_inactive = inactive_only_df.nlargest(100, 'Days Inactive')[['Serial Number', 'Device Name', 'Near Facility', 'Area', 'Device IP', 'Days Inactive', 'Status','Last Activity']]
             st.dataframe(top_inactive, use_container_width=True)
             
             # Export top inactive as image
