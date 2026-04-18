@@ -316,11 +316,6 @@ def dataframe_to_image(df, title="Data Report", col_widths=None, font_size=10,
         filtered_df = filtered_df.head(max_rows)
         st.warning(f"⚠️ Showing only first {max_rows} rows in image export")
     
-    # Create figure
-    fig, ax = plt.subplots(figsize=(14, min(30, len(filtered_df) * 0.3 + 2)))
-    ax.axis('tight')
-    ax.axis('off')
-    
     # Prepare table data
     if include_index:
         table_data = filtered_df.reset_index()
@@ -329,34 +324,78 @@ def dataframe_to_image(df, title="Data Report", col_widths=None, font_size=10,
         table_data = filtered_df
         columns = list(filtered_df.columns)
     
-    # Create table
-    table = ax.table(cellText=table_data.values, colLabels=columns, 
-                     cellLoc='center', loc='center',
-                     colWidths=col_widths or [0.27] * len(columns))
+    # Convert all data to strings and get max length for each column
+    cell_text = []
+    for _, row in table_data.iterrows():
+        cell_text.append([str(val) for val in row.values])
+    
+    # Calculate column widths based on content
+    if col_widths is None:
+        col_widths = []
+        for i, col in enumerate(columns):
+            # Get max length from header and all rows
+            col_content_lengths = [len(str(col))]
+            for row in cell_text:
+                if i < len(row):
+                    col_content_lengths.append(len(str(row[i])))
+            
+            max_chars = max(col_content_lengths) if col_content_lengths else 10
+            # Convert characters to approximate width (0.12 per char works well)
+            # Add padding and cap at reasonable limits
+            width = min(max(max_chars * 0.12, 0.8), 3.5)
+            col_widths.append(width)
+    
+    # Create figure with dynamic sizing
+    total_width = sum(col_widths) + 1
+    fig_height = min(30, len(filtered_df) * 0.4 + 2.5)
+    fig, ax = plt.subplots(figsize=(total_width, fig_height))
+    ax.axis('tight')
+    ax.axis('off')
+    
+    # Create table with calculated column widths
+    table = ax.table(cellText=cell_text, colLabels=columns, 
+                     cellLoc='left', loc='center',  # Left align for better readability
+                     colWidths=col_widths)
     
     # Style the table
     table.auto_set_font_size(False)
     table.set_fontsize(font_size)
-    table.scale(1.2, 1.5)
     
-    # Color header row
+    # Scale the table for better appearance
+    table.scale(1.0, 1.5)
+    
+    # Color header row and alternate row colors
     for (i, j), cell in table.get_celld().items():
         if i == 0:
+            # Header row
             cell.set_facecolor(header_color)
-            cell.set_text_props(weight='bold', color='white')
+            cell.set_text_props(weight='bold', color='white', ha='left')
+            cell.set_edgecolor('white')
+            cell.set_linewidth(0.5)
         else:
-            # Alternate row colors
+            # Data rows
             cell.set_facecolor(row_colors[i % 2])
+            cell.set_text_props(ha='left')
+            cell.set_edgecolor('#e0e0e0')
+            cell.set_linewidth(0.3)
     
-    # Add title
-    ax.set_title(title, fontsize=16, weight='bold', pad=20)
+    # Add title with proper spacing
+    ax.set_title(title, fontsize=14, weight='bold', pad=20)
     
+    # Adjust layout with proper margins
+    plt.subplots_adjust(left=0.02, right=0.98, top=0.95, bottom=0.02)
     plt.tight_layout()
+    
     return fig
 
 def export_table_as_image(df, title, format='png', dpi=300, **kwargs):
     """Export dataframe as image with various formats"""
-    fig = dataframe_to_image(df, title, **kwargs)
+    
+    # Check if we should use wrapped version
+    if kwargs.get('wrap_text', False):
+        fig = dataframe_to_image_wrapped(df, title, **kwargs)
+    else:
+        fig = dataframe_to_image(df, title, **kwargs)
     
     # Save to bytes buffer
     buf = io.BytesIO()
@@ -393,6 +432,7 @@ def create_image_download_button(df, table_name, **kwargs):
             key=f"rows_{table_name}"
         )
     
+    # ============ REPLACE THIS EXPANDER SECTION ============
     with st.expander(f"⚙️ Customize {table_name} Image Export"):
         col_a, col_b = st.columns(2)
         
@@ -414,6 +454,15 @@ def create_image_download_button(df, table_name, **kwargs):
             # Row color pickers
             row_color1 = st.color_picker("Row color 1", '#ffffff', key=f"row1_{table_name}")
             row_color2 = st.color_picker("Row color 2", '#f8f9fa', key=f"row2_{table_name}")
+            
+            # ============ ADD THESE NEW OPTIONS HERE ============
+            wrap_text_option = st.checkbox("Wrap long text", value=True, 
+                                          help="Wrap long text to multiple lines for better fit",
+                                          key=f"wrap_{table_name}")
+            max_chars = st.slider("Max characters per line", 20, 50, 30, 
+                                 key=f"maxchars_{table_name}") if wrap_text_option else 30
+            # ====================================================
+    # ========================================================
     
     # Filter options
     with st.expander(f"🔍 Filter {table_name} Data"):
@@ -433,9 +482,10 @@ def create_image_download_button(df, table_name, **kwargs):
         with st.spinner(f"Generating {table_name} image..."):
             sort_by = sort_column if sort_column != 'None' else None
             
+            # ============ MODIFY THIS CALL TO PASS NEW PARAMETERS ============
             img_buf = export_table_as_image(
                 df,
-                title=f"{table_name} - Generated on {datetime.now().strftime('%Y-%m-%d ')}",
+                title=f"{table_name} - Generated on {datetime.now().strftime('%Y-%m-%d %H:%M')}",
                 format=image_format.lower(),
                 dpi=dpi_value,
                 font_size=font_size,
@@ -445,8 +495,11 @@ def create_image_download_button(df, table_name, **kwargs):
                 include_index=include_index,
                 sort_by=sort_by,
                 sort_ascending=sort_ascending,
-                filters=filters if filters else None
+                filters=filters if filters else None,
+                wrap_text=wrap_text_option,        # ADD THIS
+                max_chars_per_cell=max_chars        # ADD THIS
             )
+            # =================================================================
             
             # Create download button
             file_ext = 'png' if image_format.lower() == 'png' else 'jpg' if image_format.lower() == 'jpeg' else 'pdf'
@@ -454,6 +507,73 @@ def create_image_download_button(df, table_name, **kwargs):
             href = f'<a href="data:image/{file_ext};base64,{b64_img}" download="biometric_{table_name.lower().replace(" ", "_")}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.{file_ext}">📥 Download {table_name} Image</a>'
             st.markdown(href, unsafe_allow_html=True)
             st.success(f"✅ {table_name} image ready for download!")
+def wrap_text(text, max_chars=25):
+    """Wrap long text to multiple lines"""
+    text = str(text)
+    if len(text) <= max_chars:
+        return text
+    words = text.split()
+    lines = []
+    current_line = []
+    current_len = 0
+    
+    for word in words:
+        if current_len + len(word) + 1 <= max_chars:
+            current_line.append(word)
+            current_len += len(word) + 1
+        else:
+            if current_line:
+                lines.append(' '.join(current_line))
+            current_line = [word]
+            current_len = len(word)
+    
+    if current_line:
+        lines.append(' '.join(current_line))
+    
+    return '\n'.join(lines)
+
+def dataframe_to_image_wrapped(df, title="Data Report", font_size=10, 
+                               header_color='#667eea', row_colors=['#ffffff', '#f8f9fa'],
+                               max_rows=100, max_chars_per_cell=30):
+    """Version with text wrapping for better fit"""
+    
+    # ... [same filtering and sorting code as above] ...
+    
+    # Prepare data with wrapped text
+    columns = list(filtered_df.columns)
+    wrapped_headers = [wrap_text(col, max_chars_per_cell) for col in columns]
+    
+    cell_text = []
+    for _, row in filtered_df.iterrows():
+        wrapped_row = [wrap_text(str(val), max_chars_per_cell) for val in row.values]
+        cell_text.append(wrapped_row)
+    
+    # Calculate widths based on wrapped text
+    col_widths = []
+    for i, header in enumerate(wrapped_headers):
+        max_width = len(header.split('\n')[0])  # Base on first line
+        for row in cell_text:
+            lines = row[i].split('\n')
+            for line in lines:
+                max_width = max(max_width, len(line))
+        width = min(max(max_width * 0.1, 0.8), 4.0)
+        col_widths.append(width)
+    
+    # Create figure
+    total_width = sum(col_widths) + 1
+    fig_height = min(35, len(filtered_df) * 0.5 + 2.5)
+    fig, ax = plt.subplots(figsize=(total_width, fig_height))
+    ax.axis('tight')
+    ax.axis('off')
+    
+    # Create table
+    table = ax.table(cellText=cell_text, colLabels=wrapped_headers,
+                     cellLoc='left', loc='center', colWidths=col_widths)
+    
+    # Style the table (same as before)
+    # ...
+    
+    return fig
 
 # ==================== FIXED JSON CLEANING FOR STREAMLIT CLOUD ====================
 
