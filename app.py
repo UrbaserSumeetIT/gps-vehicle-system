@@ -69,7 +69,7 @@ def load_config():
             'portal_columns': {},
             'master_columns': {}
         },
-        'app_version': '5.2',
+        'app_version': '5.3',
         'last_updated': datetime.now().isoformat()
     }
     
@@ -77,7 +77,6 @@ def load_config():
         if CONFIG_PATH.exists():
             with open(CONFIG_PATH, 'r') as f:
                 saved_config = json.load(f)
-                # Merge saved config with default to ensure all keys exist
                 for key in default_config:
                     if key not in saved_config:
                         saved_config[key] = default_config[key]
@@ -87,7 +86,6 @@ def load_config():
                                 saved_config[key][subkey] = default_config[key][subkey]
                 return saved_config
         else:
-            # Create default config file
             ensure_config_dir()
             with open(CONFIG_PATH, 'w') as f:
                 json.dump(default_config, f, indent=2)
@@ -101,7 +99,7 @@ def save_config(config_dict):
     try:
         ensure_config_dir()
         config_dict['last_updated'] = datetime.now().isoformat()
-        config_dict['app_version'] = '5.2'
+        config_dict['app_version'] = '5.3'
         with open(CONFIG_PATH, 'w') as f:
             json.dump(config_dict, f, indent=2)
         return True
@@ -138,7 +136,7 @@ def reset_config_to_default():
             'portal_columns': {},
             'master_columns': {}
         },
-        'app_version': '5.2',
+        'app_version': '5.3',
         'last_updated': datetime.now().isoformat()
     }
     return save_config(default_config)
@@ -158,7 +156,6 @@ def import_config_from_file(uploaded_file):
     """Import configuration from uploaded file"""
     try:
         config_data = json.load(uploaded_file)
-        # Validate required keys
         required_keys = ['apps_script_url', 'sheet_config', 'alerts_config', 'processing_config']
         for key in required_keys:
             if key not in config_data:
@@ -267,13 +264,6 @@ st.markdown("""
         border-radius: 15px;
         margin: 1rem 0;
     }
-    .config-saved {
-        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-        color: white;
-        padding: 0.5rem 1rem;
-        border-radius: 8px;
-        font-weight: bold;
-    }
     .config-status {
         position: fixed;
         top: 10px;
@@ -294,135 +284,76 @@ st.markdown(f'<div class="config-status">{config_status} | Config: {CONFIG_PATH}
 
 # ==================== IMAGE EXPORT FUNCTIONALITY ====================
 
-def dataframe_to_image(df, title="Data Report", col_widths=None, font_size=10, 
-                       header_color='#667eea', row_colors=['#ffffff', '#f8f9fa'],
-                       max_rows=100, include_index=False, sort_by=None, sort_ascending=True,
-                       filters=None, **kwargs):
-    """Convert dataframe to matplotlib figure with customizable styling"""
-    
-    # Apply filters if provided
-    filtered_df = df.copy()
-    if filters:
-        for column, filter_value in filters.items():
-            if filter_value and column in filtered_df.columns:
-                filtered_df = filtered_df[filtered_df[column].astype(str).str.contains(filter_value, case=False, na=False)]
-    
-    # Apply sorting if provided
-    if sort_by and sort_by in filtered_df.columns:
-        filtered_df = filtered_df.sort_values(by=sort_by, ascending=sort_ascending)
-    
-    # Limit rows
-    if len(filtered_df) > max_rows:
-        filtered_df = filtered_df.head(max_rows)
-        st.warning(f"⚠️ Showing only first {max_rows} rows in image export")
-    
-    # Prepare table data
-    if include_index:
-        table_data = filtered_df.reset_index()
-        columns = ['Index'] + list(filtered_df.columns)
-    else:
-        table_data = filtered_df
-        columns = list(filtered_df.columns)
-    
-    # Convert all data to strings and get max length for each column
-    cell_text = []
-    for _, row in table_data.iterrows():
-        cell_text.append([str(val) for val in row.values])
-    
-    # Calculate column widths based on content
-    if col_widths is None:
-        col_widths = []
-        for i, col in enumerate(columns):
-            # Get max length from header and all rows
-            col_content_lengths = [len(str(col))]
-            for row in cell_text:
-                if i < len(row):
-                    col_content_lengths.append(len(str(row[i])))
-            
-            max_chars = max(col_content_lengths) if col_content_lengths else 10
-            # Convert characters to approximate width (0.12 per char works well)
-            # Add padding and cap at reasonable limits
-            width = min(max(max_chars * 0.12, 0.8), 3.5)
-            col_widths.append(width)
-    
-    # Create figure with dynamic sizing
-    total_width = sum(col_widths) + 1
-    fig_height = min(30, len(filtered_df) * 0.4 + 2.5)
-    fig, ax = plt.subplots(figsize=(total_width, fig_height))
-    ax.axis('tight')
-    ax.axis('off')
-    
-    # Create table with calculated column widths
-    table = ax.table(cellText=cell_text, colLabels=columns, 
-                     cellLoc='left', loc='center',  # Left align for better readability
-                     colWidths=col_widths)
-    
-    # Style the table
-    table.auto_set_font_size(False)
-    table.set_fontsize(font_size)
-    
-    # Scale the table for better appearance
-    table.scale(1.0, 1.5)
-    
-    # Color header row and alternate row colors
-    for (i, j), cell in table.get_celld().items():
-        if i == 0:
-            # Header row
-            cell.set_facecolor(header_color)
-            cell.set_text_props(weight='bold', color='white', ha='left')
-            cell.set_edgecolor('white')
-            cell.set_linewidth(0.5)
-        else:
-            # Data rows
-            cell.set_facecolor(row_colors[i % 2])
-            cell.set_text_props(ha='left')
-            cell.set_edgecolor('#e0e0e0')
-            cell.set_linewidth(0.3)
-    
-    # Add title with proper spacing
-    ax.set_title(title, fontsize=14, weight='bold', pad=20)
-    
-    # Adjust layout with proper margins
-    plt.subplots_adjust(left=0.02, right=0.98, top=0.95, bottom=0.02)
-    plt.tight_layout()
-    
-    return fig
-
-def wrap_text(text, max_chars=25):
-    """Wrap long text to multiple lines"""
+def wrap_text(text, max_chars=30):
+    """Wrap long text to multiple lines intelligently"""
     text = str(text)
     if len(text) <= max_chars:
         return text
+    
+    # Try to wrap at word boundaries
     words = text.split()
-    lines = []
-    current_line = []
-    current_len = 0
-    
-    for word in words:
-        if current_len + len(word) + 1 <= max_chars:
-            current_line.append(word)
-            current_len += len(word) + 1
-        else:
-            if current_line:
-                lines.append(' '.join(current_line))
-            current_line = [word]
-            current_len = len(word)
-    
-    if current_line:
-        lines.append(' '.join(current_line))
-    
-    return '\n'.join(lines)
+    if len(words) > 1:
+        lines = []
+        current_line = []
+        current_len = 0
+        
+        for word in words:
+            word_len = len(word)
+            if current_len + word_len + 1 <= max_chars:
+                current_line.append(word)
+                current_len += word_len + 1
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                # If single word is longer than max_chars, force split
+                if word_len > max_chars:
+                    for i in range(0, word_len, max_chars):
+                        lines.append(word[i:i+max_chars])
+                else:
+                    current_line = [word]
+                    current_len = word_len
+        
+        if current_line:
+            lines.append(' '.join(current_line))
+        return '\n'.join(lines)
+    else:
+        # Single long word without spaces - force split
+        return '\n'.join([text[i:i+max_chars] for i in range(0, len(text), max_chars)])
 
-def dataframe_to_image_wrapped(df, title="Data Report", font_size=10, 
-                               header_color='#667eea', row_colors=['#ffffff', '#f8f9fa'],
-                               max_rows=100, max_chars_per_cell=30, **kwargs):
-    """Version with text wrapping for better fit"""
+def calculate_optimal_column_widths(headers, cell_text, font_size=10, 
+                                   max_width_inches=4.0, min_width_inches=0.8):
+    """Calculate optimal column widths based on content"""
+    col_widths = []
+    char_width_factor = 0.12  # Approximate width per character in inches
     
-    # Extract parameters from kwargs
-    filters = kwargs.get('filters', None)
-    sort_by = kwargs.get('sort_by', None)
-    sort_ascending = kwargs.get('sort_ascending', True)
-    include_index = kwargs.get('include_index', False)
+    for i, header in enumerate(headers):
+        # Get max width from header (considering wrapped lines)
+        header_lines = header.split('\n')
+        max_header_chars = max([len(line) for line in header_lines]) if header_lines else len(header)
+        
+        # Get max width from data rows
+        max_data_chars = 0
+        for row in cell_text:
+            if i < len(row):
+                lines = str(row[i]).split('\n')
+                for line in lines:
+                    max_data_chars = max(max_data_chars, len(line))
+        
+        max_chars = max(max_header_chars, max_data_chars, 5)
+        
+        # Convert to width with padding
+        width = max_chars * char_width_factor + 0.2  # Add padding
+        width = max(min_width_inches, min(width, max_width_inches))
+        col_widths.append(width)
+    
+    return col_widths
+
+def dataframe_to_image_autofit(df, title="Data Report", font_size=10,
+                               header_color='#667eea', row_colors=['#ffffff', '#f8f9fa'],
+                               max_rows=100, include_index=False, sort_by=None, 
+                               sort_ascending=True, filters=None, wrap_text_enabled=True,
+                               max_chars_per_cell=30, **kwargs):
+    """Convert dataframe to matplotlib figure with autofit columns and text wrapping"""
     
     # Apply filters if provided
     filtered_df = df.copy()
@@ -439,41 +370,38 @@ def dataframe_to_image_wrapped(df, title="Data Report", font_size=10,
     if len(filtered_df) > max_rows:
         filtered_df = filtered_df.head(max_rows)
     
-    # Prepare data with wrapped text
+    # Prepare data
     if include_index:
         filtered_df = filtered_df.reset_index()
         columns = ['Index'] + list(df.columns)
     else:
         columns = list(filtered_df.columns)
     
-    wrapped_headers = [wrap_text(col, max_chars_per_cell) for col in columns]
+    # Process headers and cell text with wrapping if enabled
+    if wrap_text_enabled:
+        headers = [wrap_text(col, max_chars_per_cell) for col in columns]
+        cell_text = []
+        for _, row in filtered_df.iterrows():
+            wrapped_row = [wrap_text(str(val), max_chars_per_cell) for val in row.values]
+            cell_text.append(wrapped_row)
+    else:
+        headers = columns
+        cell_text = []
+        for _, row in filtered_df.iterrows():
+            cell_text.append([str(val) for val in row.values])
     
-    cell_text = []
-    for _, row in filtered_df.iterrows():
-        wrapped_row = [wrap_text(str(val), max_chars_per_cell) for val in row.values]
-        cell_text.append(wrapped_row)
-    
-    # Calculate widths based on wrapped text
-    col_widths = []
-    for i, header in enumerate(wrapped_headers):
-        max_width = max([len(line) for line in header.split('\n')]) if header else 10
-        for row in cell_text:
-            if i < len(row):
-                lines = row[i].split('\n')
-                for line in lines:
-                    max_width = max(max_width, len(line))
-        width = min(max(max_width * 0.1, 0.8), 4.0)
-        col_widths.append(width)
+    # Calculate optimal column widths
+    col_widths = calculate_optimal_column_widths(headers, cell_text, font_size)
     
     # Create figure with dynamic sizing
-    total_width = sum(col_widths) + 1
-    fig_height = min(35, len(filtered_df) * 0.5 + 2.5)
+    total_width = sum(col_widths) + 0.5
+    fig_height = min(35, max(6, len(filtered_df) * 0.4 + 2.5))
     fig, ax = plt.subplots(figsize=(total_width, fig_height))
     ax.axis('tight')
     ax.axis('off')
     
-    # Create table with calculated column widths
-    table = ax.table(cellText=cell_text, colLabels=wrapped_headers,
+    # Create table
+    table = ax.table(cellText=cell_text, colLabels=headers,
                      cellLoc='left', loc='center', colWidths=col_widths)
     
     # Style the table
@@ -481,7 +409,7 @@ def dataframe_to_image_wrapped(df, title="Data Report", font_size=10,
     table.set_fontsize(font_size)
     table.scale(1.0, 1.5)
     
-    # Color header row and alternate row colors
+    # Color cells
     for (i, j), cell in table.get_celld().items():
         if i == 0:
             # Header row
@@ -492,27 +420,22 @@ def dataframe_to_image_wrapped(df, title="Data Report", font_size=10,
         else:
             # Data rows
             cell.set_facecolor(row_colors[i % 2])
-            cell.set_text_props(ha='left')
+            cell.set_text_props(ha='left', color='#2c3e50')
             cell.set_edgecolor('#e0e0e0')
             cell.set_linewidth(0.3)
     
-    # Add title with proper spacing
-    ax.set_title(title, fontsize=14, weight='bold', pad=20)
+    # Add title
+    ax.set_title(title, fontsize=14, weight='bold', pad=20, color='#2c3e50')
     
-    # Adjust layout with proper margins
-    plt.subplots_adjust(left=0.02, right=0.98, top=0.95, bottom=0.02)
+    # Adjust layout
+    plt.subplots_adjust(left=0.02, right=0.98, top=0.94, bottom=0.04)
     plt.tight_layout()
     
     return fig
 
 def export_table_as_image(df, title, format='png', dpi=300, **kwargs):
     """Export dataframe as image with various formats"""
-    
-    # Check if we should use wrapped version
-    if kwargs.get('wrap_text', False):
-        fig = dataframe_to_image_wrapped(df, title, **kwargs)
-    else:
-        fig = dataframe_to_image(df, title, **kwargs)
+    fig = dataframe_to_image_autofit(df, title, **kwargs)
     
     # Save to bytes buffer
     buf = io.BytesIO()
@@ -525,18 +448,21 @@ def export_table_as_image(df, title, format='png', dpi=300, **kwargs):
 def create_image_download_button(df, table_name, **kwargs):
     """Create download button for table image export"""
     
+    st.markdown("---")
+    st.markdown(f"#### 📸 {table_name} Export Settings")
+    
     col1, col2, col3 = st.columns(3)
     
     with col1:
         image_format = st.selectbox(
-            f"Format for {table_name}",
+            "Format",
             ['PNG', 'JPEG', 'PDF'],
             key=f"format_{table_name}"
         )
     
     with col2:
         dpi_value = st.selectbox(
-            f"DPI for {table_name}",
+            "Quality (DPI)",
             [150, 300, 600],
             index=1,
             key=f"dpi_{table_name}"
@@ -544,13 +470,12 @@ def create_image_download_button(df, table_name, **kwargs):
     
     with col3:
         max_rows_img = st.number_input(
-            f"Max rows for {table_name}",
+            "Max Rows",
             min_value=10, max_value=500, value=100,
             key=f"rows_{table_name}"
         )
     
-    # ============ REPLACE THIS EXPANDER SECTION ============
-    with st.expander(f"⚙️ Customize {table_name} Image Export"):
+    with st.expander(f"⚙️ Customize {table_name} Appearance", expanded=False):
         col_a, col_b = st.columns(2)
         
         with col_a:
@@ -560,29 +485,25 @@ def create_image_download_button(df, table_name, **kwargs):
                 key=f"sort_col_{table_name}"
             )
             sort_ascending = st.checkbox("Ascending order", True, key=f"sort_asc_{table_name}")
-            
             include_index = st.checkbox("Include index column", False, key=f"index_{table_name}")
-            
             header_color = st.color_picker("Header color", '#667eea', key=f"header_{table_name}")
         
         with col_b:
             font_size = st.slider("Font size", 6, 14, 10, key=f"font_{table_name}")
-            
-            # Row color pickers
             row_color1 = st.color_picker("Row color 1", '#ffffff', key=f"row1_{table_name}")
             row_color2 = st.color_picker("Row color 2", '#f8f9fa', key=f"row2_{table_name}")
             
-            # ============ ADD THESE NEW OPTIONS HERE ============
-            wrap_text_option = st.checkbox("Wrap long text", value=True, 
-                                          help="Wrap long text to multiple lines for better fit",
+            # Text wrapping options
+            wrap_text_option = st.checkbox("Wrap long text", value=True,
+                                          help="Automatically wrap long text to fit columns",
                                           key=f"wrap_{table_name}")
-            max_chars = st.slider("Max characters per line", 1, 50, 30, 
-                                 key=f"maxchars_{table_name}") if wrap_text_option else 30
-            # ====================================================
-    # ========================================================
+            max_chars = 30
+            if wrap_text_option:
+                max_chars = st.slider("Max characters per line", 15, 60, 30,
+                                     help="Text longer than this will wrap to next line",
+                                     key=f"maxchars_{table_name}")
     
-    # Filter options
-    with st.expander(f"🔍 Filter {table_name} Data"):
+    with st.expander(f"🔍 Filter {table_name} Data", expanded=False):
         filters = {}
         filter_cols = st.multiselect(
             "Select columns to filter",
@@ -595,41 +516,43 @@ def create_image_download_button(df, table_name, **kwargs):
             if filter_val:
                 filters[col] = filter_val
     
-    if st.button(f"📸 Export {table_name} as Image", key=f"export_img_{table_name}"):
-        with st.spinner(f"Generating {table_name} image..."):
-            sort_by = sort_column if sort_column != 'None' else None
-            
-            # ============ MODIFY THIS CALL TO PASS NEW PARAMETERS ============
-            img_buf = export_table_as_image(
-                df,
-                title=f"{table_name} - Generated on {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                format=image_format.lower(),
-                dpi=dpi_value,
-                font_size=font_size,
-                header_color=header_color,
-                row_colors=[row_color1, row_color2],
-                max_rows=max_rows_img,
-                include_index=include_index,
-                sort_by=sort_by,
-                sort_ascending=sort_ascending,
-                filters=filters if filters else None,
-                wrap_text=wrap_text_option,        # ADD THIS
-                max_chars_per_cell=max_chars        # ADD THIS
-            )
-            # =================================================================
-            
-            # Create download button
-            file_ext = 'png' if image_format.lower() == 'png' else 'jpg' if image_format.lower() == 'jpeg' else 'pdf'
-            b64_img = base64.b64encode(img_buf.getvalue()).decode()
-            href = f'<a href="data:image/{file_ext};base64,{b64_img}" download="biometric_{table_name.lower().replace(" ", "_")}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.{file_ext}">📥 Download {table_name} Image</a>'
-            st.markdown(href, unsafe_allow_html=True)
-            st.success(f"✅ {table_name} image ready for download!")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button(f"📸 Generate {table_name} Image", key=f"export_img_{table_name}", use_container_width=True):
+            with st.spinner(f"Generating {table_name} image..."):
+                sort_by = sort_column if sort_column != 'None' else None
+                
+                img_buf = export_table_as_image(
+                    df,
+                    title=f"{table_name} - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    format=image_format.lower(),
+                    dpi=dpi_value,
+                    font_size=font_size,
+                    header_color=header_color,
+                    row_colors=[row_color1, row_color2],
+                    max_rows=max_rows_img,
+                    include_index=include_index,
+                    sort_by=sort_by,
+                    sort_ascending=sort_ascending,
+                    filters=filters if filters else None,
+                    wrap_text_enabled=wrap_text_option,
+                    max_chars_per_cell=max_chars
+                )
+                
+                # Create download button
+                file_ext = image_format.lower()
+                if file_ext == 'jpeg':
+                    file_ext = 'jpg'
+                
+                b64_img = base64.b64encode(img_buf.getvalue()).decode()
+                href = f'<a href="data:image/{file_ext};base64,{b64_img}" download="{table_name.lower().replace(" ", "_")}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.{file_ext}">📥 Click to Download {table_name} Image</a>'
+                st.markdown(href, unsafe_allow_html=True)
+                st.success(f"✅ {table_name} image ready!")
 
 # ==================== FIXED JSON CLEANING FOR STREAMLIT CLOUD ====================
 
 def clean_data_for_json(df):
     """Replace NaN, NaT, and infinite values with empty strings for JSON serialization"""
-    # Convert to list of dictionaries manually to handle all edge cases
     records = []
     
     for _, row in df.iterrows():
@@ -637,16 +560,13 @@ def clean_data_for_json(df):
         for col in df.columns:
             val = row[col]
             
-            # Handle different types of invalid values
             if val is None:
                 record[col] = ""
-            elif pd.isna(val):  # Catches NaN, NaT, None
+            elif pd.isna(val):
                 record[col] = ""
             elif isinstance(val, (np.datetime64, pd.Timestamp)):
-                # Convert datetime to string
-                record[col] = val.strftime('%Y-%m-%d ') if pd.notna(val) else ""
+                record[col] = val.strftime('%Y-%m-%d %H:%M:%S') if pd.notna(val) else ""
             elif isinstance(val, (np.floating, float)):
-                # Handle float values (including inf)
                 if np.isnan(val) or np.isinf(val):
                     record[col] = ""
                 else:
@@ -654,7 +574,6 @@ def clean_data_for_json(df):
             elif isinstance(val, (np.integer, int)):
                 record[col] = int(val) if pd.notna(val) else ""
             else:
-                # Convert to string and clean up
                 str_val = str(val)
                 if str_val in ['nan', 'NaN', 'NaT', 'None', '<NA>', '']:
                     record[col] = ""
@@ -673,23 +592,18 @@ def export_to_google_sheets_apps_script(df, sheet_name="Biometric_Data", workshe
         if not apps_script_url:
             return False, "Apps Script URL not configured"
         
-        # Clean the data for JSON serialization
         cleaned_records = clean_data_for_json(df)
-        
-        # Determine action based on export mode
         action = 'append' if export_mode == "Append (Add rows)" else 'export'
         
-        # Prepare data payload
         data = {
             'action': action,
             'sheetName': sheet_name,
             'worksheetName': worksheet_name,
             'data': cleaned_records,
             'columns': df.columns.tolist(),
-            'timestamp': datetime.now().strftime("%Y-%m-%d ")
+            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         
-        # Send to Apps Script with increased timeout for cloud environment
         response = requests.post(
             apps_script_url, 
             json=data, 
@@ -710,19 +624,16 @@ def export_to_google_sheets_apps_script(df, sheet_name="Biometric_Data", workshe
             return False, f"HTTP Error: {response.status_code} - {response.text[:200]}"
             
     except requests.exceptions.Timeout:
-        return False, "Request timeout - the Google Sheets service might be slow. Please try again."
+        return False, "Request timeout - the Google Sheets service might be slow."
     except requests.exceptions.ConnectionError:
-        return False, "Connection error - cannot reach the Apps Script URL. Check your URL and internet connection."
+        return False, "Connection error - cannot reach the Apps Script URL."
     except Exception as e:
         return False, f"Export error: {str(e)}"
 
 def test_apps_script_connection(apps_script_url):
     """Test connection to Apps Script web app"""
     try:
-        data = {
-            'action': 'test', 
-            'timestamp': datetime.now().strftime("%Y-%m-%d")
-        }
+        data = {'action': 'test', 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         response = requests.post(
             apps_script_url, 
             json=data, 
@@ -738,39 +649,15 @@ def test_apps_script_connection(apps_script_url):
                 else:
                     return False, result.get('error', 'Connection failed')
             except json.JSONDecodeError:
-                return False, f"Invalid response from server. Response: {response.text[:100]}"
+                return False, f"Invalid response from server."
         else:
             return False, f"HTTP Error: {response.status_code}"
     except requests.exceptions.Timeout:
-        return False, "Connection timeout - check your URL and internet connection"
+        return False, "Connection timeout"
     except requests.exceptions.ConnectionError:
-        return False, "Cannot connect to the Apps Script URL. Please verify the URL is correct and the script is deployed."
+        return False, "Cannot connect to the Apps Script URL."
     except Exception as e:
         return False, f"Connection error: {str(e)}"
-
-def debug_json_serialization(df):
-    """Debug function to check JSON serialization"""
-    try:
-        records = clean_data_for_json(df)
-        # Test serialization
-        test_json = json.dumps(records[:5])  # Test first 5 records
-        st.success(f"✅ JSON serialization test passed! First 5 records: {len(test_json)} chars")
-        return True
-    except Exception as e:
-        st.error(f"❌ JSON serialization failed: {e}")
-        # Find problematic row
-        for idx, row in df.iterrows():
-            try:
-                record = {}
-                for col in df.columns:
-                    val = row[col]
-                    if isinstance(val, float) and (np.isnan(val) or np.isinf(val)):
-                        st.write(f"Problem at row {idx}, col {col}: {val}")
-                json.dumps(record)
-            except:
-                st.write(f"Problem row index: {idx}")
-                break
-        return False
 
 # Title
 st.markdown('<div class="main-header">🏢 Biometric Device Monitoring System PRO</div>', unsafe_allow_html=True)
@@ -837,7 +724,6 @@ with st.expander("⚙️ **System Configuration** (Settings are saved permanentl
                                   value=st.session_state.auto_export_enabled,
                                   key="config_auto_export")
         
-        # Quick setup guide
         with st.expander("📋 **Quick Setup Guide**", expanded=False):
             st.markdown("""
             **3 Simple Steps:**
@@ -860,78 +746,6 @@ with st.expander("⚙️ **System Configuration** (Settings are saved permanentl
                - Click "Test Connection"
                - Save Configuration (button at bottom)
             """)
-            
-            st.code('''
-function doPost(e) {
-  try {
-    const data = JSON.parse(e.postData.contents);
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    let sheet = ss.getSheetByName(data.worksheetName) || 
-                ss.insertSheet(data.worksheetName);
-    
-    if (data.action === "test") {
-      return ContentService.createTextOutput(
-        JSON.stringify({success: true})
-      ).setMimeType(ContentService.MimeType.JSON);
-    }
-    
-    if (data.action === "export") {
-      sheet.clear();
-      const headers = data.columns;
-      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-      
-      const rows = data.data.map(row => 
-        headers.map(h => row[h] !== null && row[h] !== "" ? row[h] : ""));
-      if (rows.length > 0) {
-        sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
-      }
-      
-      sheet.getRange(1, 1, 1, headers.length)
-        .setFontWeight("bold").setBackground("#667eea").setFontColor("white");
-      sheet.autoResizeColumns(1, headers.length);
-      
-      return ContentService.createTextOutput(
-        JSON.stringify({success: true, sheetUrl: ss.getUrl()})
-      ).setMimeType(ContentService.MimeType.JSON);
-    }
-    
-    if (data.action === "append") {
-      const lastRow = sheet.getLastRow();
-      let headers;
-      
-      if (lastRow === 0) {
-        headers = data.columns;
-        sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-        sheet.getRange(1, 1, 1, headers.length)
-          .setFontWeight("bold").setBackground("#667eea").setFontColor("white");
-      } else {
-        headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-      }
-      
-      const rows = data.data.map(row => 
-        headers.map(h => row[h] !== null && row[h] !== "" ? row[h] : ""));
-      
-      if (rows.length > 0) {
-        sheet.getRange(lastRow + 1, 1, rows.length, headers.length).setValues(rows);
-      }
-      
-      return ContentService.createTextOutput(
-        JSON.stringify({success: true, sheetUrl: ss.getUrl()})
-      ).setMimeType(ContentService.MimeType.JSON);
-    }
-  } catch(error) {
-    return ContentService.createTextOutput(
-      JSON.stringify({success: false, error: error.toString()})
-    ).setMimeType(ContentService.MimeType.JSON);
-  }
-}
-
-function doGet(e) {
-  return ContentService.createTextOutput(
-    JSON.stringify({success: true, message: "Apps Script is running"})
-  ).setMimeType(ContentService.MimeType.JSON);
-}
-            ''', language='javascript')
     
     # Tab 2: Processing Configuration
     with config_tab2:
@@ -958,20 +772,6 @@ function doGet(e) {
         - Days > {active_days} & Zone ≠ 'Not Authorized' → ⚠️ Inactive
         - Zone/Area = 'Not Authorized' → Not authorized
         """)
-        
-        st.markdown("#### 📁 Column Mappings (Advanced)")
-        with st.expander("Customize Column Mappings", expanded=False):
-            st.markdown("**Device Export File Columns:**")
-            portal_cols = st.text_area("Portal columns (JSON format)", 
-                                       value=json.dumps(st.session_state.column_mappings.get('portal_columns', {}), indent=2),
-                                       height=100,
-                                       key="config_portal_cols")
-            
-            st.markdown("**Master File Columns:**")
-            master_cols = st.text_area("Master columns (JSON format)", 
-                                       value=json.dumps(st.session_state.column_mappings.get('master_columns', {}), indent=2),
-                                       height=100,
-                                       key="config_master_cols")
     
     # Tab 3: Alerts Configuration
     with config_tab3:
@@ -997,12 +797,6 @@ function doGet(e) {
                 value=st.session_state.alerts_config.get('email_recipient', ''),
                 key="config_email_recipient"
             )
-        
-        st.markdown("#### 🔔 Alert Conditions")
-        st.markdown(f"""
-        - **Inactive Alert**: Triggered when devices are inactive for more than **{inactive_threshold} days**
-        - **Email Notifications**: {'✅ Enabled' if email_alerts else '❌ Disabled'}
-        """)
     
     # Tab 4: Display Configuration
     with config_tab4:
@@ -1063,7 +857,6 @@ function doGet(e) {
     col1, col2, col3 = st.columns([2, 1, 2])
     with col2:
         if st.button("💾 **SAVE ALL CONFIGURATION**", type="primary", use_container_width=True):
-            # Build config dictionary
             new_config = {
                 'apps_script_url': apps_script_url_input,
                 'sheet_config': {
@@ -1087,15 +880,10 @@ function doGet(e) {
                     'default_view': default_view,
                     'rows_per_page': rows_per_page
                 },
-                'column_mappings': {
-                    'portal_columns': json.loads(portal_cols) if portal_cols else {},
-                    'master_columns': json.loads(master_cols) if master_cols else {}
-                }
+                'column_mappings': st.session_state.column_mappings
             }
             
-            # Save to file
             if save_config(new_config):
-                # Update session state
                 st.session_state.apps_script_url = new_config['apps_script_url']
                 st.session_state.sheet_config = new_config['sheet_config']
                 st.session_state.auto_export_enabled = new_config['auto_export_enabled']
@@ -1103,7 +891,6 @@ function doGet(e) {
                 st.session_state.alerts_config = new_config['alerts_config']
                 st.session_state.processing_config = new_config['processing_config']
                 st.session_state.display_config = new_config['display_config']
-                st.session_state.column_mappings = new_config['column_mappings']
                 
                 st.success("✅ Configuration saved permanently!")
                 st.balloons()
@@ -1157,10 +944,8 @@ with st.sidebar:
                 href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="biometric_report.xlsx">Download Excel</a>'
                 st.markdown(href, unsafe_allow_html=True)
         
-        # Quick Google Sheets Export
         if st.session_state.apps_script_url:
             if st.button("📤 Export to Google Sheets", use_container_width=True):
-                # Debug serialization first (optional, can be removed in production)
                 with st.spinner("Exporting to Google Sheets..."):
                     success, result = export_to_google_sheets_apps_script(
                         st.session_state.processed_data,
@@ -1180,21 +965,18 @@ with st.sidebar:
 
 def process_biometric_data(portal_file, master_file, active_threshold=2):
     try:
-        # Load files
         portal_df = pd.read_excel(portal_file)
         try:
             master_df = pd.read_excel(master_file, sheet_name="Master")
         except:
             master_df = pd.read_excel(master_file)
         
-        # Display actual columns found
         with st.expander("🔍 Column Debug Information", expanded=False):
             st.markdown("**Device Export File Columns Found:**")
             st.write(list(portal_df.columns))
             st.markdown("**Biometric Master File Columns Found:**")
             st.write(list(master_df.columns))
         
-        # Rename columns to standard names for processing
         portal_column_map = {}
         for col in portal_df.columns:
             if col == 'Serial Number':
@@ -1223,11 +1005,9 @@ def process_biometric_data(portal_file, master_file, active_threshold=2):
             elif col == 'Near Facility':
                 master_column_map[col] = 'Near Facility'
         
-        # Apply renaming
         portal_df = portal_df.rename(columns=portal_column_map)
         master_df = master_df.rename(columns=master_column_map)
         
-        # Check for required columns
         required_portal = ['Serial Number', 'Last Activity']
         required_master = ['Serial Number']
         
@@ -1241,17 +1021,12 @@ def process_biometric_data(portal_file, master_file, active_threshold=2):
             st.error(f"❌ Missing columns in Master file: {missing_master}")
             return None, None
         
-        # Ensure Serial Number is string for proper merging
         portal_df['Serial Number'] = portal_df['Serial Number'].astype(str).str.strip()
         master_df['Serial Number'] = master_df['Serial Number'].astype(str).str.strip()
         
-        # Merge dataframes
         merged = master_df.merge(portal_df, on="Serial Number", how="left")
-        
-        # Process dates
         merged['Last Activity Date'] = pd.to_datetime(merged['Last Activity'], errors='coerce').dt.normalize()
         
-        # Calculate days inactive
         max_date = merged['Last Activity Date'].max()
         if pd.isna(max_date):
             merged['Days Inactive'] = 0
@@ -1259,7 +1034,6 @@ def process_biometric_data(portal_file, master_file, active_threshold=2):
             merged['Days Inactive'] = (max_date - merged['Last Activity Date']).dt.days
             merged['Days Inactive'] = merged['Days Inactive'].fillna(0)
         
-        # Fill missing values
         if 'Device Name Master' in merged.columns:
             merged['Device Name'] = merged['Device Name Master'].fillna('Not Available')
         elif 'Device Name' in merged.columns:
@@ -1294,12 +1068,10 @@ def process_biometric_data(portal_file, master_file, active_threshold=2):
         else:
             merged['Ward'] = merged['Ward'].fillna('Not Available')
         
-        # Replace empty strings and NaN with 'Not Available'
         for col in ['Device Name', 'Device IP', 'Bio Metric Type', 'Near Facility', 'Area', 'Ward']:
             if col in merged.columns:
                 merged[col] = merged[col].replace(['', 'nan', 'NaN', 'None', ' '], 'Not Available')
         
-        # Determine status
         def determine_status(row):
             ward = str(row.get('Ward', '')).strip()
             ward_null = ward in ['', 'Not Available', 'nan', 'NaN', 'None']
@@ -1320,12 +1092,10 @@ def process_biometric_data(portal_file, master_file, active_threshold=2):
         
         merged['Status'] = merged.apply(determine_status, axis=1)
         
-        # Create summary
         summary = merged['Status'].value_counts().reset_index()
         summary.columns = ['Status', 'Count']
         summary['Percentage'] = (summary['Count'] / summary['Count'].sum() * 100).round(1)
         
-        # Define display columns
         display_cols = ['Serial Number', 'Near Facility', 'Device Name', 'Device IP', 'Area', 'Ward', 'Bio Metric Type', 'Days Inactive', 'Status', 'Last Activity']
         
         for col in display_cols:
@@ -1334,13 +1104,11 @@ def process_biometric_data(portal_file, master_file, active_threshold=2):
         
         result_df = merged[display_cols].copy()
         
-        # Sort by status
         status_order = {'✅ Active': 0, '⚠️ Inactive': 1, 'Not authorized': 2}
         result_df['Status Order'] = result_df['Status'].map(status_order).fillna(3)
         result_df = result_df.sort_values('Status Order').drop('Status Order', axis=1)
         
-        # Add processed timestamp
-        result_df['Processed'] = datetime.now().strftime("%Y-%m-%d ")
+        result_df['Processed'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         st.success(f"✅ Processing complete! Found {len(result_df)} devices")
         
@@ -1374,7 +1142,6 @@ if process_button:
                     'blocked_count': len(processed_df[processed_df['Status'] == 'Not authorized'])
                 })
                 
-                # Auto-export to Google Sheets if enabled
                 if st.session_state.auto_export_enabled and st.session_state.apps_script_url:
                     with st.spinner("Auto-exporting to Google Sheets..."):
                         success, result = export_to_google_sheets_apps_script(
@@ -1390,7 +1157,6 @@ if process_button:
                         else:
                             st.warning(f"⚠️ Auto-export failed: {result}")
                 
-                # Alert check
                 inactive_devices = processed_df[processed_df['Status'] == '⚠️ Inactive']
                 long_inactive = inactive_devices[inactive_devices['Days Inactive'] > st.session_state.alerts_config['inactive_threshold']]
                 
@@ -1405,36 +1171,31 @@ if st.session_state.processed_data is not None:
     df = st.session_state.processed_data
     summary = st.session_state.summary_data
     
-    # Create tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Dashboard", "📋 Device Data", "📈 Analytics", "📜 History", "💾 Saved Reports"])
     
     # Tab 1: Dashboard
     with tab1:
-        # KPI Cards
         col1, col2, col3, col4 = st.columns(4)
         
-        with col1:
-            total_devices = len(df)
-            st.metric("📊 Total Devices", total_devices)
+        total_devices = len(df)
+        active_count = len(df[df['Status'] == '✅ Active'])
+        inactive_count = len(df[df['Status'] == '⚠️ Inactive'])
+        not_authorized_count = len(df[df['Status'] == 'Not authorized'])
         
+        with col1:
+            st.metric("📊 Total Devices", total_devices)
         with col2:
-            active_count = len(df[df['Status'] == '✅ Active'])
             active_pct = (active_count/total_devices*100) if total_devices > 0 else 0
             st.metric("✅ Active", f"{active_count}", delta=f"{active_pct:.1f}%")
-        
         with col3:
-            inactive_count = len(df[df['Status'] == '⚠️ Inactive'])
             inactive_pct = (inactive_count/total_devices*100) if total_devices > 0 else 0
             st.metric("⚠️ Inactive", f"{inactive_count}", delta=f"{inactive_pct:.1f}%", delta_color="inverse")
-        
         with col4:
-            not_authorized_count = len(df[df['Status'] == 'Not authorized'])
             not_authorized_pct = (not_authorized_count/total_devices*100) if total_devices > 0 else 0
             st.metric("❌ Not authorized", f"{not_authorized_count}", delta=f"{not_authorized_pct:.1f}%")
         
         st.markdown("---")
         
-        # Charts
         col1, col2 = st.columns(2)
         
         with col1:
@@ -1456,24 +1217,23 @@ if st.session_state.processed_data is not None:
             fig2.update_layout(height=400)
             st.plotly_chart(fig2, use_container_width=True)
         
-        # Additional metrics
         st.markdown("---")
         col1, col2, col3 = st.columns(3)
+        
+        avg_inactive = df['Days Inactive'].mean()
+        max_inactive = df['Days Inactive'].max()
+        compliance_rate = (active_count / total_devices * 100) if total_devices > 0 else 0
+        
         with col1:
-            avg_inactive = df['Days Inactive'].mean()
             st.metric("📊 Avg Inactive Days", f"{avg_inactive:.1f}")
         with col2:
-            max_inactive = df['Days Inactive'].max()
             st.metric("⚠️ Max Inactive Days", f"{max_inactive}")
         with col3:
-            compliance_rate = (active_count / total_devices * 100) if total_devices > 0 else 0
             st.metric("✅ Compliance Rate", f"{compliance_rate:.1f}%")
         
-        # Dashboard Table Export
         st.markdown("---")
         st.subheader("📸 Export Dashboard Data as Image")
         
-        # Create summary table for dashboard export
         dashboard_summary = pd.DataFrame({
             'Metric': ['Total Devices', 'Active Devices', 'Inactive Devices', 'Not Authorized Devices',
                       'Compliance Rate', 'Average Inactive Days', 'Max Inactive Days'],
@@ -1481,13 +1241,12 @@ if st.session_state.processed_data is not None:
                      f"{compliance_rate:.1f}%", f"{avg_inactive:.1f}", max_inactive]
         })
         
-        create_image_download_button(dashboard_summary, "Dashboard Summary", max_rows_img=50)
+        create_image_download_button(dashboard_summary, "Dashboard Summary")
     
     # Tab 2: Device Data
     with tab2:
         st.subheader("Detailed Device Data")
         
-        # Filters
         col1, col2, col3 = st.columns(3)
         with col1:
             status_filter = st.multiselect("Filter by Status", options=df['Status'].unique(), 
@@ -1495,23 +1254,18 @@ if st.session_state.processed_data is not None:
         with col2:
             if 'Area' in df.columns:
                 area_options = [x for x in df['Area'].unique() if x not in ['Not Available', 'Unknown']]
-                if area_options:
-                    area_filter = st.multiselect("Filter by Area/Zone", options=area_options, default=area_options)
-                else:
-                    area_filter = []
+                area_filter = st.multiselect("Filter by Area/Zone", options=area_options, default=area_options) if area_options else []
             else:
                 area_filter = []
         with col3:
             search = st.text_input("🔍 Search Serial Number", placeholder="Enter serial...")
         
-        # Apply filters
         filtered_df = df[df['Status'].isin(status_filter)]
         if area_filter:
             filtered_df = filtered_df[filtered_df['Area'].isin(area_filter)]
         if search:
             filtered_df = filtered_df[filtered_df['Serial Number'].astype(str).str.contains(search, case=False)]
         
-        # Color coding
         def color_status(val):
             if '✅' in str(val):
                 return 'background-color: #90EE90'
@@ -1525,12 +1279,10 @@ if st.session_state.processed_data is not None:
         st.dataframe(styled_df, use_container_width=True, height=500)
         st.caption(f"Showing {len(filtered_df)} of {len(df)} records")
         
-        # Export filtered data as image
         st.markdown("---")
         st.subheader("📸 Export Filtered Device Data as Image")
-        create_image_download_button(filtered_df, "Filtered Device Data", max_rows_img=200)
+        create_image_download_button(filtered_df, "Filtered Device Data")
         
-        # Top inactive devices
         st.markdown("---")
         st.subheader("⚠️ Top Inactive Devices")
         
@@ -1540,10 +1292,9 @@ if st.session_state.processed_data is not None:
             top_inactive = inactive_only_df.nlargest(100, 'Days Inactive')[['Serial Number', 'Device Name', 'Near Facility', 'Area', 'Device IP', 'Days Inactive', 'Status']]
             st.dataframe(top_inactive, use_container_width=True)
             
-            # Export top inactive as image
             st.markdown("---")
             st.subheader("📸 Export Top Inactive Devices as Image")
-            create_image_download_button(top_inactive, "Top Inactive Devices", max_rows_img=100)
+            create_image_download_button(top_inactive, "Top Inactive Devices")
         else:
             st.info("No inactive devices found!")
     
@@ -1564,10 +1315,9 @@ if st.session_state.processed_data is not None:
                     fig3.update_layout(height=500)
                     st.plotly_chart(fig3, use_container_width=True)
                     
-                    # Export crosstab data as image
                     st.markdown("---")
                     st.subheader("📸 Export Status by Near Facility Table")
-                    create_image_download_button(area_status.reset_index(), "Status_by_Near_Facility")
+                    create_image_download_button(area_status.reset_index(), "Status by Near Facility")
         
         with col2:
             st.markdown("#### Status by Bio Metric Type")
@@ -1579,12 +1329,10 @@ if st.session_state.processed_data is not None:
                     fig4.update_layout(height=500)
                     st.plotly_chart(fig4, use_container_width=True)
                     
-                    # Export crosstab data as image
                     st.markdown("---")
                     st.subheader("📸 Export Status by Bio Metric Type Table")
-                    create_image_download_button(bio_status.reset_index(), "Status_by_Bio_Metric")
+                    create_image_download_button(bio_status.reset_index(), "Status by Bio Metric")
         
-        # Statistics table
         st.markdown("#### Statistical Summary")
         stats_df = pd.DataFrame({
             'Metric': ['Mean Inactive Days', 'Median Inactive Days', 'Std Deviation', 'Min Days', 'Max Days', 'Total Devices'],
@@ -1599,10 +1347,9 @@ if st.session_state.processed_data is not None:
         })
         st.dataframe(stats_df, use_container_width=True)
         
-        # Export stats as image
         st.markdown("---")
         st.subheader("📸 Export Statistical Summary as Image")
-        create_image_download_button(stats_df, "Statistical_Summary")
+        create_image_download_button(stats_df, "Statistical Summary")
     
     # Tab 4: History
     with tab4:
@@ -1615,10 +1362,9 @@ if st.session_state.processed_data is not None:
             display_history.columns = ['Date & Time', 'File Name', 'Total', 'Active', 'Inactive', 'Not authorized']
             st.dataframe(display_history, use_container_width=True)
             
-            # Export history as image
             st.markdown("---")
             st.subheader("📸 Export Processing History as Image")
-            create_image_download_button(display_history, "Processing_History", max_rows_img=100)
+            create_image_download_button(display_history, "Processing History")
         else:
             st.info("No processing history yet.")
     
@@ -1638,7 +1384,7 @@ if st.session_state.processed_data is not None:
         
         if st.session_state.saved_reports:
             for idx, report in enumerate(reversed(st.session_state.saved_reports)):
-                with st.expander(f"📄 {report['name']} - {report['date'].strftime('%Y-%m-%d ')}"):
+                with st.expander(f"📄 {report['name']} - {report['date'].strftime('%Y-%m-%d %H:%M')}"):
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         if st.button(f"📊 Load Report", key=f"load_{idx}"):
@@ -1657,9 +1403,8 @@ if st.session_state.processed_data is not None:
             st.info("No saved reports. Click 'Save Current Report' to store the current analysis!")
 
 else:
-    # Welcome screen
     st.info(f"""
-    ### 👋 Welcome to Biometric Device Monitoring System PRO!
+    ### 👋 Welcome to Biometric Device Monitoring System PRO v5.3!
     
     **Configuration Status:** {'✅ Loaded from ' + str(CONFIG_PATH) if CONFIG_PATH.exists() else '🆕 Using default settings'}
     
@@ -1669,19 +1414,18 @@ else:
     3. Click **Process Data** button
     4. Explore the interactive dashboard!
     
-    **New Image Export Features:**
-    - 📸 Export any table as PNG/JPEG/PDF
-    - 🎨 Customize colors, fonts, and styling
-    - 🔍 Apply filters before export
-    - 📊 Sort data by any column
-    - 🖼️ Export charts as high-quality images
+    **✨ New Features in v5.3:**
+    - 📸 **Smart Autofit Columns**: Tables automatically adjust column widths based on content
+    - 📝 **Intelligent Text Wrapping**: Long text wraps intelligently at word boundaries
+    - 🎨 **Enhanced Image Export**: Better table formatting with proper alignment
+    - 🔧 **Customizable Wrapping**: Control max characters per line
     
     **Features:**
-    - ⚙️ **Permanent Configuration**: Settings are saved to `{CONFIG_PATH}`
+    - ⚙️ **Permanent Configuration**: Settings saved to `{CONFIG_PATH}`
     - 📊 Google Sheets integration with Apps Script
     - 📈 Interactive dashboard and analytics
     - 💾 Save and load reports
-    - 📥 Export to CSV/Excel/Images
+    - 📥 Export to CSV/Excel/High-Quality Images
     
     **Configuration is automatically saved and persists across refreshes!**
     """)
@@ -1689,6 +1433,6 @@ else:
 # Footer
 st.markdown("---")
 st.markdown(
-    f"<p style='text-align: center; color: gray;'>🏢 Biometric Device Monitor PRO | v5.2 (Streamlit Cloud Compatible) | Config: {CONFIG_PATH} | {datetime.now().strftime('%Y-%m-%d ')}</p>",
+    f"<p style='text-align: center; color: gray;'>🏢 Biometric Device Monitor PRO | v5.3 | Autofit Columns + Text Wrapping | Config: {CONFIG_PATH} | {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>",
     unsafe_allow_html=True
 )
