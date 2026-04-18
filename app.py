@@ -297,7 +297,7 @@ st.markdown(f'<div class="config-status">{config_status} | Config: {CONFIG_PATH}
 def dataframe_to_image(df, title="Data Report", col_widths=None, font_size=10, 
                        header_color='#667eea', row_colors=['#ffffff', '#f8f9fa'],
                        max_rows=100, include_index=False, sort_by=None, sort_ascending=True,
-                       filters=None):
+                       filters=None, **kwargs):
     """Convert dataframe to matplotlib figure with customizable styling"""
     
     # Apply filters if provided
@@ -415,13 +415,37 @@ def wrap_text(text, max_chars=25):
 
 def dataframe_to_image_wrapped(df, title="Data Report", font_size=10, 
                                header_color='#667eea', row_colors=['#ffffff', '#f8f9fa'],
-                               max_rows=100, max_chars_per_cell=30):
+                               max_rows=100, max_chars_per_cell=30, **kwargs):
     """Version with text wrapping for better fit"""
     
-    # ... [same filtering and sorting code as above] ...
+    # Extract parameters from kwargs
+    filters = kwargs.get('filters', None)
+    sort_by = kwargs.get('sort_by', None)
+    sort_ascending = kwargs.get('sort_ascending', True)
+    include_index = kwargs.get('include_index', False)
+    
+    # Apply filters if provided
+    filtered_df = df.copy()
+    if filters:
+        for column, filter_value in filters.items():
+            if filter_value and column in filtered_df.columns:
+                filtered_df = filtered_df[filtered_df[column].astype(str).str.contains(filter_value, case=False, na=False)]
+    
+    # Apply sorting if provided
+    if sort_by and sort_by in filtered_df.columns:
+        filtered_df = filtered_df.sort_values(by=sort_by, ascending=sort_ascending)
+    
+    # Limit rows
+    if len(filtered_df) > max_rows:
+        filtered_df = filtered_df.head(max_rows)
     
     # Prepare data with wrapped text
-    columns = list(filtered_df.columns)
+    if include_index:
+        filtered_df = filtered_df.reset_index()
+        columns = ['Index'] + list(df.columns)
+    else:
+        columns = list(filtered_df.columns)
+    
     wrapped_headers = [wrap_text(col, max_chars_per_cell) for col in columns]
     
     cell_text = []
@@ -432,30 +456,54 @@ def dataframe_to_image_wrapped(df, title="Data Report", font_size=10,
     # Calculate widths based on wrapped text
     col_widths = []
     for i, header in enumerate(wrapped_headers):
-        max_width = len(header.split('\n')[0])  # Base on first line
+        max_width = max([len(line) for line in header.split('\n')]) if header else 10
         for row in cell_text:
-            lines = row[i].split('\n')
-            for line in lines:
-                max_width = max(max_width, len(line))
+            if i < len(row):
+                lines = row[i].split('\n')
+                for line in lines:
+                    max_width = max(max_width, len(line))
         width = min(max(max_width * 0.1, 0.8), 4.0)
         col_widths.append(width)
     
-    # Create figure
+    # Create figure with dynamic sizing
     total_width = sum(col_widths) + 1
     fig_height = min(35, len(filtered_df) * 0.5 + 2.5)
     fig, ax = plt.subplots(figsize=(total_width, fig_height))
     ax.axis('tight')
     ax.axis('off')
     
-    # Create table
+    # Create table with calculated column widths
     table = ax.table(cellText=cell_text, colLabels=wrapped_headers,
                      cellLoc='left', loc='center', colWidths=col_widths)
     
-    # Style the table (same as before)
-    # ...
+    # Style the table
+    table.auto_set_font_size(False)
+    table.set_fontsize(font_size)
+    table.scale(1.0, 1.5)
+    
+    # Color header row and alternate row colors
+    for (i, j), cell in table.get_celld().items():
+        if i == 0:
+            # Header row
+            cell.set_facecolor(header_color)
+            cell.set_text_props(weight='bold', color='white', ha='left')
+            cell.set_edgecolor('white')
+            cell.set_linewidth(0.5)
+        else:
+            # Data rows
+            cell.set_facecolor(row_colors[i % 2])
+            cell.set_text_props(ha='left')
+            cell.set_edgecolor('#e0e0e0')
+            cell.set_linewidth(0.3)
+    
+    # Add title with proper spacing
+    ax.set_title(title, fontsize=14, weight='bold', pad=20)
+    
+    # Adjust layout with proper margins
+    plt.subplots_adjust(left=0.02, right=0.98, top=0.95, bottom=0.02)
+    plt.tight_layout()
     
     return fig
-
 
 def export_table_as_image(df, title, format='png', dpi=300, **kwargs):
     """Export dataframe as image with various formats"""
