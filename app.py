@@ -332,7 +332,7 @@ def dataframe_to_image(df, title="Data Report", col_widths=None, font_size=10,
     # Create table
     table = ax.table(cellText=table_data.values, colLabels=columns, 
                      cellLoc='center', loc='center',
-                     colWidths=col_widths or [0.009] * len(columns))
+                     colWidths=col_widths or [0.008] * len(columns))
     
     # Style the table
     table.auto_set_font_size(False)
