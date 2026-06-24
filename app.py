@@ -118,7 +118,9 @@ class KPIDataProcessor:
             
             # GPS status
             df['Status'] = np.where(df['Age'] <= 1, 'Working', 'Not Working')
-            df['Date'] = max_date.strftime("%d-%m-%Y")
+            
+            # Store date as datetime object
+            df['Date'] = max_date
             
             df.rename(columns={'Vehicle Registration No.': 'Vehicle Number'}, inplace=True)
             
@@ -220,6 +222,10 @@ class KPIDataProcessor:
             
             not_working['Updated Remarks'] = not_working.apply(get_updated_remarks, axis=1)
             
+            # Ensure Date column is datetime
+            if 'Date' in not_working.columns:
+                not_working['Date'] = pd.to_datetime(not_working['Date'])
+            
             self.final_df = not_working
             return not_working
             
@@ -271,6 +277,32 @@ class KPIDataProcessor:
             viz_df['Updated Remarks'] = viz_df['Updated Remarks'].replace('-', 'Need to check')
         
         return viz_df
+
+
+def format_date_column(df, column_name='Date'):
+    """Helper function to safely format date column"""
+    if column_name not in df.columns:
+        return df
+    
+    # Create a copy to avoid modifying the original
+    df_copy = df.copy()
+    
+    # Try to convert to datetime if not already
+    if not pd.api.types.is_datetime64_any_dtype(df_copy[column_name]):
+        try:
+            df_copy[column_name] = pd.to_datetime(df_copy[column_name])
+        except:
+            # If conversion fails, keep as is
+            return df_copy
+    
+    # Format as string
+    try:
+        df_copy[column_name] = df_copy[column_name].dt.strftime('%d-%m-%Y')
+    except:
+        # If still failing, keep as is
+        pass
+    
+    return df_copy
 
 
 def main():
@@ -343,10 +375,14 @@ def main():
             st.markdown("---")
             st.subheader("📥 Download")
             
+            # Prepare data for export - use helper function
+            export_df = st.session_state.processor.final_df.copy()
+            export_df = format_date_column(export_df, 'Date')
+            
             # Excel download
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                st.session_state.processor.final_df.to_excel(writer, index=False, sheet_name='Report')
+                export_df.to_excel(writer, index=False, sheet_name='Report')
             
             excel_data = output.getvalue()
             st.download_button(
@@ -359,8 +395,11 @@ def main():
     
     # Main content area
     if st.session_state.data_loaded and st.session_state.processor.final_df is not None:
-        final_df = st.session_state.processor.final_df
+        final_df = st.session_state.processor.final_df.copy()
         stats = st.session_state.processor.get_summary_stats()
+        
+        # Create a display version with formatted date using helper function
+        display_df = format_date_column(final_df, 'Date')
         
         # Create visualization dataset with '-' replaced by 'Need to check'
         viz_df = st.session_state.processor.get_visualization_remarks(final_df)
@@ -420,7 +459,7 @@ def main():
                 st.plotly_chart(fig, use_container_width=True)
         
         with tab2:
-            # Data Table with filters - Using original data (keeping '-')
+            # Data Table with filters - Using display version with formatted date
             st.subheader("📋 Detailed Data")
             
             # Filters
@@ -444,8 +483,8 @@ def main():
                     default=[]
                 )
             
-            # Apply filters
-            filtered_df = final_df[['Date','GPS IMEI No.','Vehicle Number',	'V Id',	'Vehicle Type',	
+            # Apply filters to display_df (which has formatted date)
+            filtered_df = display_df[['Date','GPS IMEI No.','Vehicle Number',	'V Id',	'Vehicle Type',	
                                     'Facility', 'Last Log Received At',	'Status', 'Technician','Updated Remarks','Age', 'Kpi Source',
                                     	'Remarks',	'User',	'Lat & Long',	'Time']].copy()
             if zone_filter:
@@ -455,18 +494,18 @@ def main():
             if facility_filter:
                 filtered_df = filtered_df[filtered_df['Facility'].isin(facility_filter)]
             
-            # Display table with original data
+            # Display table with formatted date
             st.dataframe(
                 filtered_df,
                 use_container_width=True,
                 height=400,
                 hide_index=True,
                 column_config={
-        "Date": st.column_config.DateColumn(
-            "Date",
-            format="DD-MM-YYYY", # This sets the display format
-        )
-    }
+                    "Date": st.column_config.TextColumn(
+                        "Date",
+                        help="Date in DD-MM-YYYY format"
+                    )
+                }
             )
             
             st.caption(f"Showing {len(filtered_df)} of {len(final_df)} records")
