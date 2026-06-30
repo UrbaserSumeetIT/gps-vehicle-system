@@ -175,7 +175,7 @@ class KPIDataProcessor:
             merge = pd.merge(gps_df, combined_kpi, how='left', on='Vehicle Number')
             
             # Filter not working vehicles
-            not_working = merge[(merge['Status'] == 'Not Working') & (merge['Vehicle Number'] != 'TEST 02')]
+            not_working = merge[(merge['Vehicle Number'] != 'TEST 02')]
             
             not_working = not_working[['Date', 'GPS IMEI No.', 'Vehicle Number', 'V Id', 'Vehicle Type', 
                                       'Last Log Received At', 'Age', 'Status', 'Kpi Source']]
