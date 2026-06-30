@@ -487,6 +487,9 @@ def main():
             filtered_df = display_df[['Date','GPS IMEI No.','Vehicle Number',	'V Id',	'Vehicle Type',	
                                     'Facility', 'Last Log Received At',	'Status', 'Technician','Updated Remarks','Age', 'Kpi Source',
                                     	'Remarks',	'User',	'Lat & Long',	'Time']].copy()
+            # ensure Last Log Received At is parsed, then format as dd-mm-yyyy
+            filtered_df['Last Log Received At'] = pd.to_datetime(
+            filtered_df['Last Log Received At'], errors='coerce', dayfirst=True).dt.strftime('%d-%m-%Y')
             if zone_filter:
                 filtered_df = filtered_df[filtered_df['Zone'].isin(zone_filter)]
             if status_filter:
