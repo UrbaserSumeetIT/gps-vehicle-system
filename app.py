@@ -485,8 +485,8 @@ def main():
             
             # Apply filters to display_df (which has formatted date)
             # Include 'Zone' in the displayed columns to avoid KeyError when filtering
-            filtered_df = display_df[['Date','GPS IMEI No.','Vehicle Number','Zone','V Id','Vehicle Type',
-                                    'Facility', 'Last Log Received At', 'Status', 'Technician','Updated Remarks','Age', 'Kpi Source',
+            filtered_df = display_df[['Date','GPS IMEI No.','Vehicle Number','V Id','Vehicle Type',
+                                    'Facility', 'Last Log Received At', 'Status', 'Technician','Updated Remarks','Age','Zone', 'Kpi Source',
                                         'Remarks', 'User', 'Lat & Long', 'Time']].copy()
             # ensure Last Log Received At is parsed, then format as dd-mm-yyyy
             filtered_df['Last Log Received At'] = pd.to_datetime(
