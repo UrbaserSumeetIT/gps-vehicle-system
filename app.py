@@ -19,6 +19,7 @@ import os
 import sys
 import json
 from openpyxl.utils import get_column_letter
+import gc
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -29,14 +30,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-# Import gspread with error handling - but only if needed
-try:
-    import gspread
-    from oauth2client.service_account import ServiceAccountCredentials
-    GSPREAD_AVAILABLE = True
-except ImportError:
-    GSPREAD_AVAILABLE = False
 
 # Debug mode - set to False for production
 DEBUG_MODE = False
@@ -82,7 +75,7 @@ st.markdown("""
         background-color: #ffc107;
         color: black;
     }
-    /* Fix for segmentation fault - reduce memory usage */
+    /* Memory optimization */
     .stDataFrame {
         max-height: 400px !important;
     }
@@ -109,156 +102,282 @@ class KPIDataProcessor:
         """Load vehicle master file - optimized for memory"""
         try:
             debug_print(f"Loading vehicle master from: {file.name}")
-            # Use read_excel with limited memory usage
+            
+            # Reset file pointer
+            file.seek(0)
+            
+            # First, try to read with limited rows to check structure
+            try:
+                # Read only first few rows to identify columns
+                sample_df = pd.read_excel(file, engine='openpyxl', nrows=5, sheet_name='vehiclemaster')
+                debug_print(f"Sample columns: {sample_df.columns.tolist()}")
+                file.seek(0)  # Reset file pointer
+            except Exception as e:
+                debug_print(f"Error reading sample: {e}")
+                file.seek(0)
+            
+            # Read the actual data with memory optimization
             df = pd.read_excel(
                 file, 
                 engine='openpyxl', 
                 sheet_name='vehiclemaster', 
                 skiprows=4,
-                nrows=None  # Read all rows but we'll filter
+                dtype=str  # Read all as string to avoid type inference issues
             )
+            
+            # Clean column names
             df.columns = df.columns.str.strip()
-            df.rename(columns={'Register Number': 'Vehicle Number'}, inplace=True)
-            # Keep only necessary columns to reduce memory
-            if 'Vehicle Number' in df.columns:
-                # Drop rows with NaN in Vehicle Number
+            
+            # Find the correct column for vehicle number
+            vehicle_col = None
+            for col in df.columns:
+                if 'Register Number' in col or 'Vehicle Number' in col or 'Vehicle No' in col:
+                    vehicle_col = col
+                    break
+            
+            if vehicle_col:
+                df.rename(columns={vehicle_col: 'Vehicle Number'}, inplace=True)
+                # Remove rows with empty vehicle numbers
                 df = df[df['Vehicle Number'].notna()]
+                df = df[df['Vehicle Number'] != '']
+                df = df[df['Vehicle Number'] != 'nan']
+            
+            # Keep only necessary columns
+            important_cols = ['Vehicle Number', 'Zone', 'Facility', 'Technician']
+            existing_cols = [col for col in important_cols if col in df.columns]
+            if existing_cols:
+                df = df[existing_cols].copy()
+            
             self.vm_df = df
             debug_print(f"✅ Loaded {len(df)} vehicles from master")
+            
             # Force garbage collection
-            import gc
             gc.collect()
             return df
+            
         except Exception as e:
             error_msg = f"Error loading vehicle master: {str(e)}"
             debug_print(f"❌ {error_msg}")
-            st.error(error_msg)
+            st.error(f"Error loading vehicle master: {e}")
             return None
     
     def process_kpi_file(self, file, kpi_type):
         """Process KPI files based on type - optimized"""
         try:
             debug_print(f"Processing KPI file: {file.name} ({kpi_type})")
-            # Read only necessary columns to reduce memory
-            df = pd.read_excel(file, engine='openpyxl')
+            file.seek(0)
+            
+            # Read only necessary columns
+            df = pd.read_excel(file, engine='openpyxl', dtype=str)
+            
             required_cols = ['Kpi Date', 'Zone', 'Vehicle Number', 'Marching In Out Timings']
-            missing_cols = [col for col in required_cols if col not in df.columns]
-            if missing_cols:
-                debug_print(f"⚠️ Missing columns in {kpi_type}: {missing_cols}")
+            # Check which required columns exist
+            existing_cols = [col for col in required_cols if col in df.columns]
+            
+            if len(existing_cols) < 3:
+                debug_print(f"⚠️ Missing columns in {kpi_type}: {required_cols}")
                 return None
             
-            df = df[required_cols].copy()
+            df = df[existing_cols].copy()
             df = df[df['Zone'].notna()]
+            df = df[df['Zone'] != '']
+            df = df[df['Zone'] != 'nan']
             df['Kpi Source'] = kpi_type
+            
             debug_print(f"✅ Processed {len(df)} rows from {kpi_type}")
-            import gc
             gc.collect()
             return df
+            
         except Exception as e:
             error_msg = f"Error processing {kpi_type}: {str(e)}"
             debug_print(f"❌ {error_msg}")
-            st.error(error_msg)
             return None
     
     def process_kpi52(self, file):
         """Process KPI 52 with vehicle master merge - optimized"""
         try:
             debug_print(f"Processing KPI 52 from: {file.name}")
-            df = pd.read_excel(file, engine='openpyxl')
-            df.rename(columns={'Vehicle Number': 'V ID'}, inplace=True)
+            file.seek(0)
+            
+            df = pd.read_excel(file, engine='openpyxl', dtype=str)
+            
+            # Find vehicle ID column
+            vid_col = None
+            for col in df.columns:
+                if 'V ID' in col or 'Vehicle Number' in col:
+                    vid_col = col
+                    break
+            
+            if not vid_col:
+                debug_print("⚠️ No vehicle ID column found in KPI 52")
+                return None
+            
+            df.rename(columns={vid_col: 'V ID'}, inplace=True)
+            
             # Merge with vehicle master
-            merge = pd.merge(df, self.vm_df, how='left', on='V ID')
-            kpi_data = merge[['Kpi Date', 'Zone_x', 'Vehicle Number', 'Marching In Out Timings']].copy()
-            kpi_data = kpi_data.rename(columns={'Zone_x': 'Zone'})
-            kpi_data = kpi_data[kpi_data['Zone'].notna()]
+            if self.vm_df is not None and not self.vm_df.empty:
+                merge = pd.merge(df, self.vm_df, how='left', on='V ID')
+            else:
+                merge = df.copy()
+            
+            # Extract KPI data
+            kpi_data = pd.DataFrame()
+            if 'Kpi Date' in merge.columns:
+                kpi_data['Kpi Date'] = merge['Kpi Date']
+            if 'Zone' in merge.columns:
+                kpi_data['Zone'] = merge['Zone']
+            elif 'Zone_x' in merge.columns:
+                kpi_data['Zone'] = merge['Zone_x']
+            if 'Vehicle Number' in merge.columns:
+                kpi_data['Vehicle Number'] = merge['Vehicle Number']
+            if 'Marching In Out Timings' in merge.columns:
+                kpi_data['Marching In Out Timings'] = merge['Marching In Out Timings']
+            
+            if 'Zone' in kpi_data.columns:
+                kpi_data = kpi_data[kpi_data['Zone'].notna()]
+                kpi_data = kpi_data[kpi_data['Zone'] != '']
+                kpi_data = kpi_data[kpi_data['Zone'] != 'nan']
+            
             kpi_data['Kpi Source'] = 'KPI 52'
+            
             debug_print(f"✅ Processed {len(kpi_data)} rows from KPI 52")
-            import gc
             gc.collect()
             return kpi_data
+            
         except Exception as e:
             error_msg = f"Error processing KPI 52: {str(e)}"
             debug_print(f"❌ {error_msg}")
-            st.error(error_msg)
             return None
     
     def process_gps_status(self, file):
         """Process GPS status file - optimized"""
         try:
             debug_print(f"Processing GPS status from: {file.name}")
-            # Read the file
-            df = pd.read_excel(file, engine='openpyxl')
+            file.seek(0)
             
-            # Rename columns if they exist
-            if 'Chassis No.' in df.columns:
-                df.rename(columns={'Chassis No.':'V Id'} ,inplace=True)
+            # Try to read the file
+            df = pd.read_excel(file, engine='openpyxl', dtype=str)
             
-            # Convert date column
+            # Find and rename columns
+            col_mapping = {}
+            
+            # Find Chassis No. / V Id
+            for col in df.columns:
+                if 'Chassis' in col or 'chassis' in col or 'V Id' in col or 'VID' in col:
+                    col_mapping[col] = 'V Id'
+                    break
+            
+            # Find Vehicle Registration No.
+            for col in df.columns:
+                if 'Registration' in col or 'Vehicle Number' in col or 'Vehicle No' in col:
+                    col_mapping[col] = 'Vehicle Number'
+                    break
+            
+            # Rename columns
+            for old, new in col_mapping.items():
+                if old in df.columns:
+                    df.rename(columns={old: new}, inplace=True)
+            
+            # Process date column
             if 'Last Log Received At' in df.columns:
-                log_dates = pd.to_datetime(df['Last Log Received At'], dayfirst=True).dt.normalize()
-                max_date = log_dates.max()
-                df['Age'] = (max_date - log_dates).dt.days
-                df['Status'] = np.where(df['Age'] <= 1, 'Working', 'Not Working')
-                df['Date'] = max_date
+                try:
+                    # Try to convert to datetime
+                    df['Last Log Received At'] = pd.to_datetime(df['Last Log Received At'], errors='coerce')
+                    max_date = df['Last Log Received At'].max()
+                    df['Date'] = max_date
+                    df['Age'] = (max_date - df['Last Log Received At']).dt.days
+                    df['Status'] = np.where(df['Age'] <= 1, 'Working', 'Not Working')
+                except Exception as e:
+                    debug_print(f"Date conversion error: {e}")
+                    df['Age'] = 0
+                    df['Status'] = 'Unknown'
+                    df['Date'] = datetime.now()
             
-            # Rename vehicle column
-            if 'Vehicle Registration No.' in df.columns:
-                df.rename(columns={'Vehicle Registration No.': 'Vehicle Number'}, inplace=True)
-            
-            # Select only necessary columns
+            # Keep only necessary columns
             cols_to_keep = ['Date', 'GPS IMEI No.', 'Vehicle Number', 'V Id', 'Vehicle Type', 
-                           'Last Log Received At', 'Last Location', 'Age', 'Status']
+                           'Last Log Received At', 'Age', 'Status']
             existing_cols = [col for col in cols_to_keep if col in df.columns]
+            
+            if not existing_cols:
+                debug_print("⚠️ No required columns found in GPS file")
+                return None
+            
             final_df = df[existing_cols].copy()
+            
+            # Clean vehicle numbers
+            if 'Vehicle Number' in final_df.columns:
+                final_df['Vehicle Number'] = final_df['Vehicle Number'].astype(str).str.strip()
+                final_df = final_df[final_df['Vehicle Number'] != 'nan']
+                final_df = final_df[final_df['Vehicle Number'] != '']
+                final_df = final_df[final_df['Vehicle Number'] != 'None']
             
             self.gps_df = final_df
             debug_print(f"✅ Processed GPS status: {len(final_df)} vehicles")
-            import gc
             gc.collect()
             return final_df
+            
         except Exception as e:
             error_msg = f"Error processing GPS status: {str(e)}"
             debug_print(f"❌ {error_msg}")
-            st.error(error_msg)
+            st.error(f"Error processing GPS status: {e}")
             return None
     
     def process_gps_remarks(self, file):
         """Process GPS remarks CSV file"""
         try:
             debug_print(f"Processing GPS remarks from: {file.name}")
-            df = pd.read_csv(file)
-            # Check if required columns exist
-            required_cols = ['Date', 'Vehicle Registration No.', 'Remarks', 'Facility','Time', 'Technician']
+            file.seek(0)
+            
+            df = pd.read_csv(file, dtype=str)
+            
+            # Check for required columns
+            required_cols = ['Date', 'Vehicle Registration No.']
             existing_cols = [col for col in required_cols if col in df.columns]
-            if len(existing_cols) < 4:
-                debug_print(f"⚠️ Missing columns in remarks file: {existing_cols}")
+            
+            if len(existing_cols) < 2:
+                debug_print(f"⚠️ Missing columns in remarks file")
                 return None
             
-            df = df[existing_cols].copy()
-            df.rename(columns={
-                'Vehicle Registration No.': 'Vehicle Number',
-                'Facility':'Remark_Facility',
-                'Technician':'Remarks_Technician',
-                'Time':'Remarks Date'
-            }, inplace=True)
+            # Rename columns
+            rename_map = {}
+            for col in df.columns:
+                if 'Registration' in col or 'Vehicle No' in col:
+                    rename_map[col] = 'Vehicle Number'
+                if 'Remarks' in col:
+                    rename_map[col] = 'Remarks'
+                if 'Technician' in col:
+                    rename_map[col] = 'Technician'
+                if 'Facility' in col:
+                    rename_map[col] = 'Facility'
+            
+            df.rename(columns=rename_map, inplace=True)
+            
             debug_print(f"✅ Processed {len(df)} remarks")
             return df
+            
         except Exception as e:
             error_msg = f"Error processing GPS remarks: {str(e)}"
             debug_print(f"❌ {error_msg}")
-            st.warning(f"Could not process remarks file: {error_msg}")
             return None
     
     def combine_all_data(self, kpi_files, gps_file, remarks_file=None):
         """Combine all data sources - optimized for memory"""
         try:
             debug_print("Starting data combination process...")
-            if gps_file:
-                gps_df = self.process_gps_status(gps_file)
-                if gps_df is None:
-                    st.error("Failed to process GPS file")
-                    return (None, None)
             
+            if not gps_file:
+                st.error("No GPS file provided")
+                return (None, None)
+                
+            # Process GPS file
+            gps_df = self.process_gps_status(gps_file)
+            if gps_df is None or gps_df.empty:
+                st.error("Failed to process GPS file or no data found")
+                return (None, None)
+            
+            debug_print(f"GPS data: {len(gps_df)} rows")
+            
+            # Process KPI files
             kpi_dfs = []
             for file, kpi_type in kpi_files:
                 debug_print(f"Processing KPI: {kpi_type}")
@@ -267,50 +386,45 @@ class KPIDataProcessor:
                 else:
                     kpi_df = self.process_kpi_file(file, kpi_type)
                 
-                if kpi_df is not None:
+                if kpi_df is not None and not kpi_df.empty:
                     kpi_dfs.append(kpi_df)
             
             if not kpi_dfs:
-                st.warning("No valid KPI data found")
-                return (None, None)
-            
-            # Combine KPI data
-            combined_kpi = pd.concat(kpi_dfs, ignore_index=True)
-            combined_kpi = combined_kpi.drop_duplicates(subset=['Vehicle Number'], keep='first')
-            debug_print(f"Combined KPI data: {len(combined_kpi)} unique vehicles")
+                st.warning("No valid KPI data found - continuing with GPS data only")
+                combined_kpi = pd.DataFrame()
+            else:
+                combined_kpi = pd.concat(kpi_dfs, ignore_index=True)
+                if 'Vehicle Number' in combined_kpi.columns:
+                    combined_kpi = combined_kpi.drop_duplicates(subset=['Vehicle Number'], keep='first')
+                debug_print(f"Combined KPI data: {len(combined_kpi)} unique vehicles")
             
             # Merge with GPS data
-            merge = pd.merge(gps_df, combined_kpi, how='left', on='Vehicle Number')
+            if not combined_kpi.empty and 'Vehicle Number' in combined_kpi.columns:
+                merge = pd.merge(gps_df, combined_kpi, how='left', on='Vehicle Number')
+            else:
+                merge = gps_df.copy()
             
             # Filter out test vehicles
-            not_working = merge[merge['Vehicle Number'] != 'TEST 02']
+            merge = merge[merge['Vehicle Number'] != 'TEST 02']
+            merge = merge[merge['Vehicle Number'] != 'test 02']
             
-            # Select necessary columns
-            base_cols = ['Date', 'GPS IMEI No.', 'Vehicle Number', 'V Id', 'Vehicle Type', 
-                        'Last Log Received At', 'Age', 'Status', 'Kpi Source']
-            existing_base = [col for col in base_cols if col in not_working.columns]
-            not_working = not_working[existing_base].copy()
-            
-            # Process remarks
+            # Add remarks if provided
             if remarks_file:
                 remarks_df = self.process_gps_remarks(remarks_file)
-                if remarks_df is not None:
-                    # Merge remarks
-                    remark_cols = ['Vehicle Number', 'Remarks']
-                    if all(col in remarks_df.columns for col in remark_cols):
-                        not_working = pd.merge(not_working, remarks_df[remark_cols], 
-                                              how='left', on='Vehicle Number')
+                if remarks_df is not None and 'Vehicle Number' in remarks_df.columns:
+                    merge = pd.merge(merge, remarks_df[['Vehicle Number', 'Remarks']], 
+                                    how='left', on='Vehicle Number')
             
-            # Merge with vehicle master
-            if self.vm_df is not None:
+            # Add vehicle master data
+            if self.vm_df is not None and not self.vm_df.empty:
                 vm_cols = ['Vehicle Number', 'Zone', 'Facility', 'Technician']
                 existing_vm = [col for col in vm_cols if col in self.vm_df.columns]
                 if existing_vm:
-                    not_working = pd.merge(not_working, self.vm_df[existing_vm], 
-                                          how='left', on='Vehicle Number')
+                    merge = pd.merge(merge, self.vm_df[existing_vm], 
+                                    how='left', on='Vehicle Number')
             
             # Fill NaN values
-            not_working = not_working.fillna('-')
+            merge = merge.fillna('-')
             
             # Process updated remarks
             def get_updated_remarks(row):
@@ -336,27 +450,31 @@ class KPIDataProcessor:
                 else:
                     return '-'
             
-            not_working['Updated Remarks'] = not_working.apply(get_updated_remarks, axis=1)
+            if 'Updated Remarks' not in merge.columns:
+                merge['Updated Remarks'] = merge.apply(get_updated_remarks, axis=1)
             
-            # Convert date
-            if 'Date' in not_working.columns:
-                not_working['Date'] = pd.to_datetime(not_working['Date'])
+            # Format dates
+            if 'Date' in merge.columns:
+                try:
+                    merge['Date'] = pd.to_datetime(merge['Date'])
+                except:
+                    pass
             
             # Separate working and not working
-            working = not_working[not_working['Status'] == 'Working'].copy()
-            not_working_only = not_working[(not_working['Status'] == 'Not Working') & 
-                                          (not_working['Vehicle Number'] != 'TEST 02')].copy()
-            
-            # Combined dataframe
-            combined_df = pd.concat([not_working_only, working], ignore_index=True)
+            if 'Status' in merge.columns:
+                working = merge[merge['Status'] == 'Working'].copy()
+                not_working_only = merge[(merge['Status'] == 'Not Working') & 
+                                        (merge['Vehicle Number'] != 'TEST 02')].copy()
+            else:
+                working = pd.DataFrame()
+                not_working_only = merge.copy()
             
             self.final_df = not_working_only
             self.not_working_df = not_working_only
             self.working_df = working
-            self.combined_df = combined_df
+            self.combined_df = pd.concat([not_working_only, working], ignore_index=True)
             
             debug_print(f"✅ Data combination complete: Not Working: {len(not_working_only)}, Working: {len(working)}")
-            import gc
             gc.collect()
             return (not_working_only, working)
             
@@ -364,7 +482,7 @@ class KPIDataProcessor:
             error_msg = f"Error combining data: {str(e)}"
             debug_print(f"❌ {error_msg}")
             debug_print(traceback.format_exc())
-            st.error(error_msg)
+            st.error(f"Error combining data: {e}")
             if DEBUG_MODE:
                 st.error(traceback.format_exc())
             return (None, None)
@@ -495,9 +613,14 @@ def main():
         vm_file = st.file_uploader("Upload Vehicle Master", type=['xlsm', 'xlsx'])
         if vm_file:
             with st.spinner("Loading vehicle master..."):
-                vm_df = st.session_state.processor.load_vehicle_master(vm_file)
-                if vm_df is not None:
-                    st.success(f"✅ Loaded {len(vm_df)} vehicles")
+                try:
+                    vm_df = st.session_state.processor.load_vehicle_master(vm_file)
+                    if vm_df is not None and not vm_df.empty:
+                        st.success(f"✅ Loaded {len(vm_df)} vehicles")
+                    else:
+                        st.warning("⚠️ No vehicles loaded from master file")
+                except Exception as e:
+                    st.error(f"Error loading vehicle master: {e}")
         
         # GPS Status File
         st.subheader("GPS Status")
@@ -528,7 +651,7 @@ def main():
         # Process Button
         st.markdown("---")
         if st.button("🚀 Process Data", type="primary", use_container_width=True):
-            if gps_file and kpi_files:
+            if gps_file:
                 with st.spinner("Processing data..."):
                     try:
                         result = st.session_state.processor.combine_all_data(
@@ -542,13 +665,13 @@ def main():
                         elif isinstance(result, tuple) and len(result) == 2:
                             not_working_df, working_df = result
                             
-                            if not_working_df is not None and working_df is not None:
+                            if not_working_df is not None and not not_working_df.empty:
                                 st.session_state.data_loaded = True
                                 st.session_state.not_working_df = not_working_df
-                                st.session_state.working_df = working_df
+                                st.session_state.working_df = working_df if working_df is not None else pd.DataFrame()
                                 st.session_state.final_df = not_working_df
-                                st.session_state.combined_df = pd.concat([not_working_df, working_df], ignore_index=True)
-                                st.success(f"✅ Data processed successfully!\nNot Working: {len(not_working_df)}, Working: {len(working_df)}")
+                                st.session_state.combined_df = pd.concat([not_working_df, working_df if working_df is not None else pd.DataFrame()], ignore_index=True)
+                                st.success(f"✅ Data processed successfully!\nNot Working: {len(not_working_df)}, Working: {len(working_df) if working_df is not None else 0}")
                             else:
                                 st.error("❌ Failed to process data. Please check your input files.")
                         else:
@@ -558,7 +681,7 @@ def main():
                         if DEBUG_MODE:
                             st.error(traceback.format_exc())
             else:
-                st.warning("⚠️ Please upload GPS Status and at least one KPI file")
+                st.warning("⚠️ Please upload GPS Status file")
         
         # Download Section
         if st.session_state.data_loaded and not st.session_state.not_working_df.empty:
@@ -592,16 +715,14 @@ def main():
         try:
             not_working_df = st.session_state.not_working_df
             working_df = st.session_state.working_df
-            combined_df = st.session_state.combined_df
             
-            if not_working_df.empty and working_df.empty:
+            if not_working_df.empty:
                 st.warning("No data available to display")
                 return
             
-            final_df = not_working_df if not not_working_df.empty else working_df
+            final_df = not_working_df
             stats = st.session_state.processor.get_summary_stats(final_df)
             
-            display_df = format_date_column(final_df, 'Date')
             viz_df = st.session_state.processor.get_visualization_remarks(final_df)
             viz_stats = st.session_state.processor.get_summary_stats(viz_df)
             
@@ -618,129 +739,35 @@ def main():
             
             st.markdown("---")
             
-            # Use tabs but limit data display
-            tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "📋 Data Table", "📈 Analytics"])
+            # Data Table
+            st.subheader("📋 Not Working Vehicles")
             
-            with tab1:
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    if viz_stats.get('remarks_summary'):
-                        remarks_df = pd.DataFrame({
-                            'Remarks': list(viz_stats['remarks_summary'].keys()),
-                            'Count': list(viz_stats['remarks_summary'].values())
-                        })
-                        fig = px.pie(remarks_df, values='Count', names='Remarks', title='Vehicle Status Distribution')
-                        fig.update_traces(textposition='inside', textinfo='percent+label')
-                        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-                
-                with col2:
-                    if stats.get('zone_summary'):
-                        zone_df = pd.DataFrame({
-                            'Zone': list(stats['zone_summary'].keys()),
-                            'Count': list(stats['zone_summary'].values())
-                        })
-                        fig = px.bar(zone_df, x='Zone', y='Count', title='Vehicles by Zone', 
-                                    color='Count', color_continuous_scale='Blues')
-                        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-                
-                if 'Age' in final_df.columns:
-                    age_df = final_df['Age'].value_counts().reset_index()
-                    age_df.columns = ['Days', 'Count']
-                    age_df = age_df.sort_values('Days')
-                    fig = px.line(age_df, x='Days', y='Count', title='Vehicle Age Distribution',
-                                 markers=True)
-                    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+            display_columns = ['Date', 'GPS IMEI No.', 'Vehicle Number', 'V Id', 'Vehicle Type',
+                             'Facility', 'Last Log Received At', 'Status', 'Technician', 
+                             'Updated Remarks', 'Age', 'Zone']
             
-            with tab2:
-                st.subheader("📋 Detailed Data - All Vehicles")
-                
-                combined_display_df = format_date_column(combined_df, 'Date')
-                
-                view_filter = st.radio(
-                    "Show:",
-                    ["All Vehicles", "Not Working Only", "Working Only"],
-                    horizontal=True
-                )
-                
-                if view_filter == "Not Working Only":
-                    filtered_combined = combined_display_df[combined_display_df['Status'] == 'Not Working']
-                elif view_filter == "Working Only":
-                    filtered_combined = combined_display_df[combined_display_df['Status'] == 'Working']
-                else:
-                    filtered_combined = combined_display_df.copy()
-                
-                # Limit displayed data to prevent memory issues
-                if len(filtered_combined) > 1000:
-                    st.warning(f"Showing first 1000 of {len(filtered_combined)} records")
-                    filtered_combined = filtered_combined.head(1000)
-                
-                # Display columns
-                display_columns = ['Date', 'GPS IMEI No.', 'Vehicle Number', 'V Id', 'Vehicle Type',
-                                 'Facility', 'Last Log Received At', 'Status', 'Technician', 
-                                 'Updated Remarks', 'Age', 'Zone']
-                display_columns = [col for col in display_columns if col in filtered_combined.columns]
-                filtered_combined = filtered_combined[display_columns]
-                
-                st.dataframe(
-                    filtered_combined,
-                    use_container_width=True,
-                    height=400,
-                    hide_index=True
-                )
-                
-                total_records = len(combined_df) if not combined_df.empty else 0
-                st.caption(f"Showing {len(filtered_combined)} of {total_records} records")
+            # Get existing columns
+            existing_display = [col for col in display_columns if col in not_working_df.columns]
+            display_df = not_working_df[existing_display].copy()
             
-            with tab3:
-                st.subheader("📈 Advanced Analytics")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    if 'Age' in final_df.columns and 'Zone' in final_df.columns:
-                        age_zone = final_df.groupby('Zone')['Age'].mean().reset_index()
-                        fig = px.bar(age_zone, x='Zone', y='Age', title='Average Age by Zone',
-                                    color='Age', color_continuous_scale='RdYlGn_r')
-                        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-                
-                with col2:
-                    if 'Updated Remarks' in viz_df.columns and 'Zone' in viz_df.columns:
-                        status_zone = pd.crosstab(viz_df['Zone'], viz_df['Updated Remarks'])
-                        fig = px.imshow(status_zone, text_auto=True, 
-                                       title='Status Distribution by Zone',
-                                       color_continuous_scale='Blues')
-                        fig.update_layout(height=400)
-                        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-                
-                st.subheader("👨‍🔧 Technician-wise Updated Remarks Analysis")
-                
-                if 'Technician' in viz_df.columns and 'Updated Remarks' in viz_df.columns:
-                    tech_remarks = pd.crosstab(
-                        viz_df['Technician'], 
-                        viz_df['Updated Remarks'],
-                        margins=True,
-                        margins_name='Total'
-                    )
-                    
-                    if tech_remarks is not None and not tech_remarks.empty:
-                        st.dataframe(
-                            tech_remarks,
-                            use_container_width=True,
-                            height=300
-                        )
-                
-                st.subheader("Key Metrics")
-                
-                if 'Age' in final_df.columns:
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Average Age", f"{final_df['Age'].mean():.1f} days")
-                    with col2:
-                        st.metric("Max Age", f"{final_df['Age'].max()} days")
-                    with col3:
-                        st.metric("Min Age", f"{final_df['Age'].min()} days")
-        
+            # Format dates
+            if 'Date' in display_df.columns:
+                display_df['Date'] = pd.to_datetime(display_df['Date'], errors='coerce').dt.strftime('%d-%m-%Y')
+            
+            if 'Last Log Received At' in display_df.columns:
+                display_df['Last Log Received At'] = pd.to_datetime(
+                    display_df['Last Log Received At'], errors='coerce'
+                ).dt.strftime('%d-%m-%Y')
+            
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                height=400,
+                hide_index=True
+            )
+            
+            st.caption(f"Total Not Working Vehicles: {len(display_df)}")
+            
         except Exception as e:
             st.error(f"❌ Error displaying data: {str(e)}")
             if DEBUG_MODE:
@@ -753,15 +780,15 @@ def main():
         ### How to use:
         1. **Upload Files** in the sidebar
         2. Click **Process Data** to generate the report
-        3. View **Dashboards**, **Data Tables**, and **Analytics**
+        3. View the **Data Table** with Not Working vehicles
         4. **Download** the Excel report
         
         ### Required Files:
         - 📍 GPS Status File (.xlsx or .xlsm)
-        - 📊 At least one KPI file (.xlsx)
-        - 📋 Vehicle Master (.xlsm) - Recommended for better data matching
         
         ### Optional Files:
+        - 📋 Vehicle Master (.xlsm) - For better data matching
+        - 📊 KPI Files (.xlsx) - For KPI data integration
         - 📝 GPS Remarks (.csv) - Adds remarks and user information
         """)
 
