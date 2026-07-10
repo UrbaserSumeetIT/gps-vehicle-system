@@ -6,3 +6,4 @@ plotly
 xlrd
 python-dateutil
 pytz
+gspread
