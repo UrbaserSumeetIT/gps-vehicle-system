@@ -16,9 +16,18 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 import os
+import sys
+import json
 from openpyxl.utils import get_column_letter
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+
+# Import gspread with error handling
+try:
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
+    GSPREAD_AVAILABLE = True
+except ImportError:
+    GSPREAD_AVAILABLE = False
+    st.warning("⚠️ gspread not installed. Google Sheets upload feature will be disabled.")
 
 # Set page config
 st.set_page_config(
@@ -27,6 +36,14 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Debug mode - set to True for troubleshooting
+DEBUG_MODE = True
+
+def debug_print(msg):
+    """Print debug messages if DEBUG_MODE is True"""
+    if DEBUG_MODE:
+        print(f"🔍 DEBUG: {msg}", file=sys.stderr)
 
 # Custom CSS
 st.markdown("""
@@ -64,6 +81,16 @@ st.markdown("""
         background-color: #ffc107;
         color: black;
     }
+    .debug-info {
+        background-color: #f0f0f0;
+        padding: 10px;
+        border-radius: 5px;
+        border-left: 4px solid #ff6b6b;
+        font-family: monospace;
+        font-size: 12px;
+        margin: 10px 0;
+        overflow-x: auto;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -71,6 +98,7 @@ class KPIDataProcessor:
     """Processing class for KPI data with file uploads"""
     
     def __init__(self):
+        debug_print("Initializing KPIDataProcessor")
         self.vm_df = None
         self.gps_df = None
         self.kpi_df = None
@@ -82,36 +110,46 @@ class KPIDataProcessor:
     def load_vehicle_master(self, file):
         """Load vehicle master file"""
         try:
+            debug_print(f"Loading vehicle master from: {file.name}")
             df = pd.read_excel(file, engine='openpyxl', sheet_name='vehiclemaster', skiprows=4)
             df.columns = df.columns.str.strip()
             df.rename(columns={'Register Number': 'Vehicle Number'}, inplace=True)
             self.vm_df = df
+            debug_print(f"✅ Loaded {len(df)} vehicles from master")
             return df
         except Exception as e:
-            st.error(f"Error loading vehicle master: {str(e)}")
+            error_msg = f"Error loading vehicle master: {str(e)}"
+            debug_print(f"❌ {error_msg}")
+            st.error(error_msg)
             return None
     
     def process_kpi_file(self, file, kpi_type):
         """Process KPI files based on type"""
         try:
+            debug_print(f"Processing KPI file: {file.name} ({kpi_type})")
             df = pd.read_excel(file, engine='openpyxl')
             required_cols = ['Kpi Date', 'Zone', 'Vehicle Number', 'Marching In Out Timings']
             missing_cols = [col for col in required_cols if col not in df.columns]
             if missing_cols:
+                debug_print(f"⚠️ Missing columns in {kpi_type}: {missing_cols}")
                 st.warning(f"Missing columns in {kpi_type}: {missing_cols}")
                 return None
             
             df = df[required_cols].copy()
             df = df[df['Zone'].notna()]
             df['Kpi Source'] = kpi_type
+            debug_print(f"✅ Processed {len(df)} rows from {kpi_type}")
             return df
         except Exception as e:
-            st.error(f"Error processing {kpi_type}: {str(e)}")
+            error_msg = f"Error processing {kpi_type}: {str(e)}"
+            debug_print(f"❌ {error_msg}")
+            st.error(error_msg)
             return None
     
     def process_kpi52(self, file):
         """Process KPI 52 with vehicle master merge"""
         try:
+            debug_print(f"Processing KPI 52 from: {file.name}")
             df = pd.read_excel(file, engine='openpyxl')
             df.rename(columns={'Vehicle Number': 'V ID'}, inplace=True)
             merge = pd.merge(df, self.vm_df, how='left', on='V ID')
@@ -119,14 +157,18 @@ class KPIDataProcessor:
             kpi_data = kpi_data.rename(columns={'Zone_x': 'Zone'})
             kpi_data = kpi_data[kpi_data['Zone'].notna()]
             kpi_data['Kpi Source'] = 'KPI 52'
+            debug_print(f"✅ Processed {len(kpi_data)} rows from KPI 52")
             return kpi_data
         except Exception as e:
-            st.error(f"Error processing KPI 52: {str(e)}")
+            error_msg = f"Error processing KPI 52: {str(e)}"
+            debug_print(f"❌ {error_msg}")
+            st.error(error_msg)
             return None
     
     def process_gps_status(self, file):
         """Process GPS status file"""
         try:
+            debug_print(f"Processing GPS status from: {file.name}")
             df = pd.read_excel(file, engine='openpyxl')
             df.rename(columns={'Chassis No.':'V Id'} ,inplace=True)
             
@@ -143,24 +185,32 @@ class KPIDataProcessor:
                           'Last Log Received At', 'Last Location', 'Age', 'Status']]
             
             self.gps_df = final_df
+            debug_print(f"✅ Processed GPS status: {len(final_df)} vehicles, {len(final_df[final_df['Status']=='Not Working'])} not working")
             return final_df
         except Exception as e:
-            st.error(f"Error processing GPS status: {str(e)}")
+            error_msg = f"Error processing GPS status: {str(e)}"
+            debug_print(f"❌ {error_msg}")
+            st.error(error_msg)
             return None
     
     def process_gps_remarks(self, file):
         """Process GPS remarks CSV file"""
         try:
+            debug_print(f"Processing GPS remarks from: {file.name}")
             df = pd.read_csv(file, usecols=['Date', 'Vehicle Registration No.', 'Remarks', 'Facility','Time', 'Technician'])
             df.rename(columns={'Vehicle Registration No.': 'Vehicle Number','Facility':'Remark_Facility','Technician':'Remarks_Technician','Time':'Remarks Date'}, inplace=True)
+            debug_print(f"✅ Processed {len(df)} remarks")
             return df
         except Exception as e:
-            st.error(f"Error processing GPS remarks: {str(e)}")
+            error_msg = f"Error processing GPS remarks: {str(e)}"
+            debug_print(f"❌ {error_msg}")
+            st.error(error_msg)
             return None
     
     def combine_all_data(self, kpi_files, gps_file, remarks_file=None):
         """Combine all data sources"""
         try:
+            debug_print("Starting data combination process...")
             if gps_file:
                 gps_df = self.process_gps_status(gps_file)
                 if gps_df is None:
@@ -169,6 +219,7 @@ class KPIDataProcessor:
             
             kpi_dfs = []
             for file, kpi_type in kpi_files:
+                debug_print(f"Processing KPI: {kpi_type}")
                 if '52' in kpi_type and self.vm_df is not None:
                     kpi_df = self.process_kpi52(file)
                 else:
@@ -183,6 +234,7 @@ class KPIDataProcessor:
             
             combined_kpi = pd.concat(kpi_dfs, ignore_index=True)
             combined_kpi = combined_kpi.drop_duplicates(subset=['Vehicle Number'], keep='first')
+            debug_print(f"Combined KPI data: {len(combined_kpi)} unique vehicles")
             
             merge = pd.merge(gps_df, combined_kpi, how='left', on='Vehicle Number')
             
@@ -242,10 +294,14 @@ class KPIDataProcessor:
             self.working_df = working
             self.combined_df = combined_df
             
+            debug_print(f"✅ Data combination complete: Not Working: {len(not_working_only)}, Working: {len(working)}")
             return (not_working_only, working)
             
         except Exception as e:
-            st.error(f"Error combining data: {str(e)}")
+            error_msg = f"Error combining data: {str(e)}"
+            debug_print(f"❌ {error_msg}")
+            debug_print(traceback.format_exc())
+            st.error(error_msg)
             st.error(traceback.format_exc())
             return (None, None)
     
@@ -341,6 +397,7 @@ def highlight_status(row):
 
 def initialize_session_state():
     """Initialize all session state variables"""
+    debug_print("Initializing session state")
     if 'processor' not in st.session_state:
         st.session_state.processor = KPIDataProcessor()
     
@@ -358,6 +415,9 @@ def initialize_session_state():
     
     if 'combined_df' not in st.session_state:
         st.session_state.combined_df = pd.DataFrame()
+    
+    if 'debug_logs' not in st.session_state:
+        st.session_state.debug_logs = []
 
 
 def upload_to_google_sheets(credentials_json, sheet_name, sheet_index, df):
@@ -370,7 +430,11 @@ def upload_to_google_sheets(credentials_json, sheet_name, sheet_index, df):
         sheet_index: Sheet index (0-based)
         df: DataFrame to upload
     """
+    if not GSPREAD_AVAILABLE:
+        return False, "❌ gspread library not installed. Please install: pip install gspread oauth2client"
+    
     try:
+        debug_print(f"Uploading to Google Sheets: {sheet_name}, sheet {sheet_index}")
         # Define the scope
         scope = ['https://spreadsheets.google.com/feeds',
                  'https://www.googleapis.com/auth/drive']
@@ -381,9 +445,11 @@ def upload_to_google_sheets(credentials_json, sheet_name, sheet_index, df):
         
         # Open the spreadsheet
         spreadsheet = client.open(sheet_name)
+        debug_print(f"✅ Opened spreadsheet: {sheet_name}")
         
         # Get the worksheet by index
         worksheet = spreadsheet.get_worksheet(sheet_index)
+        debug_print(f"✅ Got worksheet {sheet_index + 1}")
         
         # Clear existing data (keep headers)
         worksheet.clear()
@@ -394,20 +460,30 @@ def upload_to_google_sheets(credentials_json, sheet_name, sheet_index, df):
         
         # Update the worksheet
         worksheet.update(data_to_upload)
+        debug_print(f"✅ Uploaded {len(df)} rows to Google Sheets")
         
         return True, f"✅ Successfully uploaded {len(df)} rows to Google Sheet: {sheet_name} (Sheet {sheet_index + 1})"
         
+    except gspread.exceptions.SpreadsheetNotFound:
+        return False, f"❌ Spreadsheet '{sheet_name}' not found. Please check the name and make sure it's shared with the service account."
+    except gspread.exceptions.WorksheetNotFound:
+        return False, f"❌ Worksheet at index {sheet_index} not found. Please check the sheet index."
     except Exception as e:
-        return False, f"❌ Error uploading to Google Sheets: {str(e)}"
+        error_msg = f"❌ Error uploading to Google Sheets: {str(e)}"
+        debug_print(error_msg)
+        debug_print(traceback.format_exc())
+        return False, error_msg
 
 
 def create_html_email_body(analytics_data):
     """Create email body with exact Campaign Statistics style"""
+    debug_print("Creating HTML email body")
     
     # Build technician table HTML
     tech_table_html = ""
     if analytics_data.get('tech_remarks_data') is not None:
         tech_df = analytics_data['tech_remarks_data']
+        debug_print(f"Building table with {len(tech_df)} rows")
         
         tech_table_html = """
         <div style="overflow-x: auto; margin-top: 12px;">
@@ -700,6 +776,7 @@ def send_email_with_attachment(sender_email, sender_password, recipient_email, s
     Send email with attachment using Gmail SMTP with HTML body
     """
     try:
+        debug_print(f"Sending email to: {recipient_email}")
         # Create message
         msg = MIMEMultipart('alternative')
         msg['From'] = sender_email
@@ -740,46 +817,74 @@ def send_email_with_attachment(sender_email, sender_password, recipient_email, s
         server.send_message(msg)
         server.quit()
         
+        debug_print("✅ Email sent successfully")
         return True, "Email sent successfully via Gmail!"
         
     except smtplib.SMTPAuthenticationError:
-        return False, "Gmail authentication failed. Please use an App Password instead of your regular Gmail password."
+        error_msg = "Gmail authentication failed. Please use an App Password instead of your regular Gmail password."
+        debug_print(f"❌ {error_msg}")
+        return False, error_msg
     except smtplib.SMTPException as e:
-        return False, f"SMTP error occurred: {str(e)}"
+        error_msg = f"SMTP error occurred: {str(e)}"
+        debug_print(f"❌ {error_msg}")
+        return False, error_msg
     except Exception as e:
-        return False, f"Failed to send email: {str(e)}"
+        error_msg = f"Failed to send email: {str(e)}"
+        debug_print(f"❌ {error_msg}")
+        debug_print(traceback.format_exc())
+        return False, error_msg
 
 
 def create_combined_report(combined_df):
     """Create Excel report with combined data"""
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # Format dates
-        export_df = format_date_column(combined_df.copy(), 'Date')
-        
-        # Write to Excel
-        export_df.to_excel(writer, index=False, sheet_name='All_Vehicles_Report')
-        
-        # Auto-adjust column widths
-        worksheet = writer.sheets['All_Vehicles_Report']
-        for column_idx, column_name in enumerate(export_df.columns, 1):
-            # Get the column letter from column index
-            column_letter = get_column_letter(column_idx)
+    try:
+        debug_print("Creating combined Excel report")
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            # Format dates
+            export_df = format_date_column(combined_df.copy(), 'Date')
             
-            # Calculate column width
-            max_length = max(
-                export_df[column_name].astype(str).map(len).max() if not export_df[column_name].empty else 0,
-                len(str(column_name))
-            )
-            adjusted_width = min(max_length + 2, 50)
-            worksheet.column_dimensions[column_letter].width = adjusted_width
-    
-    return output
+            # Write to Excel
+            export_df.to_excel(writer, index=False, sheet_name='All_Vehicles_Report')
+            
+            # Auto-adjust column widths
+            worksheet = writer.sheets['All_Vehicles_Report']
+            for column_idx, column_name in enumerate(export_df.columns, 1):
+                # Get the column letter from column index
+                column_letter = get_column_letter(column_idx)
+                
+                # Calculate column width
+                max_length = max(
+                    export_df[column_name].astype(str).map(len).max() if not export_df[column_name].empty else 0,
+                    len(str(column_name))
+                )
+                adjusted_width = min(max_length + 2, 50)
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+        
+        debug_print(f"✅ Excel report created with {len(export_df)} rows")
+        return output
+    except Exception as e:
+        debug_print(f"❌ Error creating Excel report: {str(e)}")
+        debug_print(traceback.format_exc())
+        return None
 
 
 def main():
     # Initialize session state first
     initialize_session_state()
+    
+    # Display debug info if in debug mode
+    if DEBUG_MODE:
+        with st.expander("🔍 Debug Information", expanded=False):
+            st.markdown("### System Information")
+            st.code(f"""
+Python Version: {sys.version}
+Streamlit Version: {st.__version__}
+Pandas Version: {pd.__version__}
+gspread Available: {GSPREAD_AVAILABLE}
+Working Directory: {os.getcwd()}
+Files in directory: {os.listdir('.') if os.path.exists('.') else 'N/A'}
+            """)
     
     st.markdown('<h1 class="main-header">🚛 GPS & KPI Monitoring Dashboard</h1>', unsafe_allow_html=True)
     
@@ -828,6 +933,7 @@ def main():
             if gps_file and kpi_files:
                 with st.spinner("Processing data..."):
                     try:
+                        debug_print("Process Data button clicked")
                         result = st.session_state.processor.combine_all_data(
                             kpi_files=kpi_files,
                             gps_file=gps_file,
@@ -836,6 +942,7 @@ def main():
                         
                         if result is None:
                             st.error("❌ Processing returned None")
+                            debug_print("❌ Processing returned None")
                         elif isinstance(result, tuple) and len(result) == 2:
                             not_working_df, working_df = result
                             
@@ -846,16 +953,22 @@ def main():
                                 st.session_state.final_df = not_working_df
                                 st.session_state.combined_df = pd.concat([not_working_df, working_df], ignore_index=True)
                                 st.success(f"✅ Data processed successfully!\nNot Working: {len(not_working_df)}, Working: {len(working_df)}")
+                                debug_print(f"✅ Data processed: Not Working: {len(not_working_df)}, Working: {len(working_df)}")
                             else:
                                 st.error("❌ Failed to process data. Please check your input files.")
+                                debug_print("❌ Failed to process data - result was None")
                         else:
                             st.error(f"❌ Unexpected return type: {type(result)}")
                             st.write("Returned value:", result)
+                            debug_print(f"❌ Unexpected return type: {type(result)}")
                     except Exception as e:
                         st.error(f"❌ Error during processing: {str(e)}")
                         st.error(traceback.format_exc())
+                        debug_print(f"❌ Error during processing: {str(e)}")
+                        debug_print(traceback.format_exc())
             else:
                 st.warning("⚠️ Please upload GPS Status and at least one KPI file")
+                debug_print("⚠️ Missing GPS Status or KPI files")
         
         # Download Section
         if st.session_state.data_loaded and not st.session_state.not_working_df.empty:
@@ -887,6 +1000,9 @@ def main():
             st.subheader("📤 Upload to Google Sheets")
             
             with st.expander("📤 Google Sheets Upload Settings", expanded=False):
+                if not GSPREAD_AVAILABLE:
+                    st.error("❌ gspread library not installed. Please install: pip install gspread oauth2client")
+                
                 st.info("""
                 **📌 Google Sheets Setup:**
                 1. Upload your Service Account JSON credentials file
@@ -917,16 +1033,21 @@ def main():
                 )
                 
                 if st.button("📤 Upload to Google Sheets", type="primary", use_container_width=True):
-                    if creds_file is None:
+                    if not GSPREAD_AVAILABLE:
+                        st.error("❌ gspread library not installed. Please install: pip install gspread oauth2client")
+                    elif creds_file is None:
                         st.error("❌ Please upload your Service Account JSON credentials file")
                     else:
                         with st.spinner("Uploading to Google Sheets..."):
                             try:
+                                debug_print("Starting Google Sheets upload")
                                 # Load credentials from uploaded file
                                 credentials_json = json.load(creds_file)
+                                debug_print("✅ Credentials loaded successfully")
                                 
                                 # Get not working data
                                 not_working_df = st.session_state.not_working_df.copy()
+                                debug_print(f"✅ Retrieved {len(not_working_df)} rows for upload")
                                 
                                 # Select only the required columns
                                 required_columns = [
@@ -938,6 +1059,7 @@ def main():
                                 # Filter columns that exist
                                 existing_columns = [col for col in required_columns if col in not_working_df.columns]
                                 upload_df = not_working_df[existing_columns].copy()
+                                debug_print(f"✅ Selected {len(existing_columns)} columns for upload")
                                 
                                 # Format Date column
                                 if 'Date' in upload_df.columns:
@@ -965,6 +1087,7 @@ def main():
                                 }
                                 
                                 upload_df = upload_df.rename(columns=column_mapping)
+                                debug_print("✅ Columns renamed successfully")
                                 
                                 # Upload to Google Sheets
                                 success, message = upload_to_google_sheets(
@@ -977,6 +1100,7 @@ def main():
                                 if success:
                                     st.success(f"✅ {message}")
                                     st.info(f"📊 Uploaded {len(upload_df)} Not Working GPS records")
+                                    debug_print(f"✅ Upload successful: {len(upload_df)} records")
                                     
                                     # Show preview of uploaded data
                                     st.subheader("📋 Preview of Uploaded Data")
@@ -984,12 +1108,18 @@ def main():
                                     
                                 else:
                                     st.error(f"❌ {message}")
+                                    debug_print(f"❌ Upload failed: {message}")
                                     
                             except json.JSONDecodeError:
-                                st.error("❌ Invalid JSON file. Please upload a valid Service Account credentials file.")
+                                error_msg = "❌ Invalid JSON file. Please upload a valid Service Account credentials file."
+                                st.error(error_msg)
+                                debug_print(f"❌ {error_msg}")
                             except Exception as e:
-                                st.error(f"❌ Error uploading to Google Sheets: {str(e)}")
+                                error_msg = f"❌ Error uploading to Google Sheets: {str(e)}"
+                                st.error(error_msg)
                                 st.error(traceback.format_exc())
+                                debug_print(f"❌ {error_msg}")
+                                debug_print(traceback.format_exc())
         
         # Email Section with Gmail Support
         if st.session_state.data_loaded and not st.session_state.combined_df.empty:
@@ -1035,11 +1165,14 @@ def main():
                 if st.button("📧 Send Email Report", type="primary", use_container_width=True):
                     if not sender_email or not sender_password or not recipient_email:
                         st.error("❌ Please fill in all email fields")
+                        debug_print("❌ Missing email fields")
                     elif "@gmail.com" not in sender_email:
                         st.error("❌ Please use a valid Gmail address (must end with @gmail.com)")
+                        debug_print("❌ Invalid Gmail address")
                     else:
                         with st.spinner("Preparing and sending email..."):
                             try:
+                                debug_print("Starting email preparation")
                                 combined_df = st.session_state.combined_df.copy()
                                 not_working_df = st.session_state.not_working_df.copy()
                                 
@@ -1049,12 +1182,17 @@ def main():
                                 if not include_working and include_not_working:
                                     combined_df = combined_df[combined_df['Status'] == 'Not Working']
                                     viz_df = viz_df[viz_df['Status'] == 'Not Working']
+                                    debug_print("Filtering: Only Not Working")
                                 elif include_working and not include_not_working:
                                     combined_df = combined_df[combined_df['Status'] == 'Working']
                                     viz_df = viz_df[viz_df['Status'] == 'Working']
+                                    debug_print("Filtering: Only Working")
+                                else:
+                                    debug_print("Filtering: All vehicles")
                                 
                                 if combined_df.empty:
                                     st.warning("No data to send based on your selection")
+                                    debug_print("⚠️ No data to send based on selection")
                                 else:
                                     # Prepare analytics data for email
                                     analytics_data = {}
@@ -1063,6 +1201,7 @@ def main():
                                     analytics_data['total_vehicles'] = len(combined_df)
                                     analytics_data['working_count'] = len(combined_df[combined_df['Status'] == 'Working']) if 'Status' in combined_df.columns else 0
                                     analytics_data['not_working_count'] = len(combined_df[combined_df['Status'] == 'Not Working']) if 'Status' in combined_df.columns else 0
+                                    debug_print(f"Stats: Total: {analytics_data['total_vehicles']}, Working: {analytics_data['working_count']}, Not Working: {analytics_data['not_working_count']}")
                                     
                                     # Technician remarks data
                                     tech_remarks = None
@@ -1080,6 +1219,7 @@ def main():
                                         
                                         if tech_remarks is not None and not tech_remarks.empty:
                                             analytics_data['tech_remarks_data'] = tech_remarks
+                                            debug_print(f"✅ Tech remarks table created with {len(tech_remarks)} rows")
                                             
                                             tech_remarks_viz = tech_remarks.drop('Total', errors='ignore')
                                             if 'Total' in tech_remarks_viz.columns:
@@ -1094,6 +1234,7 @@ def main():
                                                     most_common_remarks = tech_remarks_viz[remarks_cols].idxmax(axis=1)
                                                     most_common = most_common_remarks.value_counts()
                                                     most_common_issue = most_common.index[0] if not most_common.empty else 'N/A'
+                                                    debug_print(f"Tech with issues: {tech_with_issues}, Most common: {most_common_issue}")
                                     
                                     analytics_data['tech_with_issues'] = tech_with_issues
                                     analytics_data['most_common_issue'] = most_common_issue
@@ -1103,30 +1244,39 @@ def main():
                                     
                                     # Create report file
                                     report_data = create_combined_report(combined_df)
-                                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                                    subject = f"GPS & KPI Monitoring Report - {timestamp}"
-                                    filename = f"GPS_KPI_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                                    
-                                    # Send email
-                                    success, message = send_email_with_attachment(
-                                        sender_email=sender_email,
-                                        sender_password=sender_password,
-                                        recipient_email=recipient_email,
-                                        subject=subject,
-                                        html_body=html_body,
-                                        attachment_data=report_data,
-                                        filename=filename
-                                    )
-                                    
-                                    if success:
-                                        st.success(f"✅ Email sent successfully to {recipient_email}!")
-                                        st.info(f"Report includes: {analytics_data.get('working_count', 0)} Working, {analytics_data.get('not_working_count', 0)} Not Working vehicles")
+                                    if report_data is None:
+                                        st.error("❌ Failed to create Excel report")
+                                        debug_print("❌ Failed to create Excel report")
                                     else:
-                                        st.error(f"❌ {message}")
+                                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                        subject = f"GPS & KPI Monitoring Report - {timestamp}"
+                                        filename = f"GPS_KPI_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                                        
+                                        # Send email
+                                        success, message = send_email_with_attachment(
+                                            sender_email=sender_email,
+                                            sender_password=sender_password,
+                                            recipient_email=recipient_email,
+                                            subject=subject,
+                                            html_body=html_body,
+                                            attachment_data=report_data,
+                                            filename=filename
+                                        )
+                                        
+                                        if success:
+                                            st.success(f"✅ Email sent successfully to {recipient_email}!")
+                                            st.info(f"Report includes: {analytics_data.get('working_count', 0)} Working, {analytics_data.get('not_working_count', 0)} Not Working vehicles")
+                                            debug_print("✅ Email sent successfully")
+                                        else:
+                                            st.error(f"❌ {message}")
+                                            debug_print(f"❌ Email failed: {message}")
                                         
                             except Exception as e:
-                                st.error(f"❌ Error sending email: {str(e)}")
+                                error_msg = f"❌ Error sending email: {str(e)}"
+                                st.error(error_msg)
                                 st.error(traceback.format_exc())
+                                debug_print(f"❌ {error_msg}")
+                                debug_print(traceback.format_exc())
     
     # Main content area
     if st.session_state.data_loaded:
@@ -1407,6 +1557,11 @@ def main():
         - Uses Gmail SMTP (smtp.gmail.com:587)
         - Requires Gmail App Password (enable 2FA first)
         - App Password: Google Account → Security → App passwords
+        
+        ### Debug Mode:
+        - Debug mode is enabled (set DEBUG_MODE = False to disable)
+        - Check the debug expander for system information
+        - All errors are logged with detailed stack traces
         """)
 
 
