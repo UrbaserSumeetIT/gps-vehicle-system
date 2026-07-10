@@ -7,3 +7,4 @@ xlrd
 python-dateutil
 pytz
 gspread
+oauth2client
