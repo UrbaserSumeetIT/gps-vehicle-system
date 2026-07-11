@@ -3,8 +3,7 @@ pandas
 numpy
 openpyxl
 plotly
-xlrd
-python-dateutil
-pytz
 gspread
 oauth2client
+google-auth
+google-auth-oauthlib
