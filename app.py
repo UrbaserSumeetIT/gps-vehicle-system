@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -17,8 +16,6 @@ from email.mime.base import MIMEBase
 from email import encoders
 import os
 from openpyxl.utils import get_column_letter
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 
 # Set page config
 st.set_page_config(
@@ -358,47 +355,6 @@ def initialize_session_state():
     
     if 'combined_df' not in st.session_state:
         st.session_state.combined_df = pd.DataFrame()
-
-
-def upload_to_google_sheets(credentials_json, sheet_name, sheet_index, df):
-    """
-    Upload DataFrame to Google Sheets
-    
-    Args:
-        credentials_json: Service account credentials JSON
-        sheet_name: Name of the Google Sheet
-        sheet_index: Sheet index (0-based)
-        df: DataFrame to upload
-    """
-    try:
-        # Define the scope
-        scope = ['https://spreadsheets.google.com/feeds',
-                 'https://www.googleapis.com/auth/drive']
-        
-        # Authenticate using service account
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_json, scope)
-        client = gspread.authorize(creds)
-        
-        # Open the spreadsheet
-        spreadsheet = client.open(sheet_name)
-        
-        # Get the worksheet by index
-        worksheet = spreadsheet.get_worksheet(sheet_index)
-        
-        # Clear existing data (keep headers)
-        worksheet.clear()
-        
-        # Prepare data for upload
-        # Convert DataFrame to list of lists with headers
-        data_to_upload = [df.columns.tolist()] + df.values.tolist()
-        
-        # Update the worksheet
-        worksheet.update(data_to_upload)
-        
-        return True, f"✅ Successfully uploaded {len(df)} rows to Google Sheet: {sheet_name} (Sheet {sheet_index + 1})"
-        
-    except Exception as e:
-        return False, f"❌ Error uploading to Google Sheets: {str(e)}"
 
 
 def create_html_email_body(analytics_data):
@@ -881,116 +837,6 @@ def main():
                 use_container_width=True
             )
         
-        # Google Sheets Upload Section
-        if st.session_state.data_loaded and not st.session_state.not_working_df.empty:
-            st.markdown("---")
-            st.subheader("📤 Upload to Google Sheets")
-            
-            with st.expander("📤 Google Sheets Upload Settings", expanded=False):
-                st.info("""
-                **📌 Google Sheets Setup:**
-                1. Upload your Service Account JSON credentials file
-                2. Share your Google Sheet with the service account email
-                3. Enter the sheet name and index
-                """)
-                
-                # Credentials file upload
-                creds_file = st.file_uploader(
-                    "Upload Service Account JSON Credentials",
-                    type=['json'],
-                    help="Download from Google Cloud Console → Service Accounts"
-                )
-                
-                # Sheet details
-                sheet_name = st.text_input(
-                    "Google Sheet Name",
-                    value="GPS Not Working",
-                    help="Name of the Google Sheet"
-                )
-                
-                sheet_index = st.number_input(
-                    "Sheet Index",
-                    min_value=0,
-                    max_value=10,
-                    value=2,
-                    help="Sheet index (0-based, 0 = first sheet)"
-                )
-                
-                if st.button("📤 Upload to Google Sheets", type="primary", use_container_width=True):
-                    if creds_file is None:
-                        st.error("❌ Please upload your Service Account JSON credentials file")
-                    else:
-                        with st.spinner("Uploading to Google Sheets..."):
-                            try:
-                                # Load credentials from uploaded file
-                                credentials_json = json.load(creds_file)
-                                
-                                # Get not working data
-                                not_working_df = st.session_state.not_working_df.copy()
-                                
-                                # Select only the required columns
-                                required_columns = [
-                                    'Date', 'GPS IMEI No.', 'Vehicle Number', 'V Id', 
-                                    'Vehicle Type', 'Facility', 'Last Log Received At', 
-                                    'Status', 'Technician', 'Updated Remarks', 'Age'
-                                ]
-                                
-                                # Filter columns that exist
-                                existing_columns = [col for col in required_columns if col in not_working_df.columns]
-                                upload_df = not_working_df[existing_columns].copy()
-                                
-                                # Format Date column
-                                if 'Date' in upload_df.columns:
-                                    upload_df['Date'] = pd.to_datetime(upload_df['Date']).dt.strftime('%d-%m-%Y')
-                                
-                                # Format Last Log Received At column
-                                if 'Last Log Received At' in upload_df.columns:
-                                    upload_df['Last Log Received At'] = pd.to_datetime(
-                                        upload_df['Last Log Received At'], errors='coerce', dayfirst=True
-                                    ).dt.strftime('%d-%m-%Y')
-                                
-                                # Rename columns to match requested format
-                                column_mapping = {
-                                    'Date': 'Date',
-                                    'GPS IMEI No.': 'GPS IMEI No.',
-                                    'Vehicle Number': 'Vehicle Number',
-                                    'V Id': 'VID',
-                                    'Vehicle Type': 'Vehicle Type',
-                                    'Facility': 'Facility',
-                                    'Last Log Received At': 'Last Log Receive at',
-                                    'Status': 'Status',
-                                    'Technician': 'Technician',
-                                    'Updated Remarks': 'Remarks',
-                                    'Age': 'Aging'
-                                }
-                                
-                                upload_df = upload_df.rename(columns=column_mapping)
-                                
-                                # Upload to Google Sheets
-                                success, message = upload_to_google_sheets(
-                                    credentials_json=credentials_json,
-                                    sheet_name=sheet_name,
-                                    sheet_index=sheet_index,
-                                    df=upload_df
-                                )
-                                
-                                if success:
-                                    st.success(f"✅ {message}")
-                                    st.info(f"📊 Uploaded {len(upload_df)} Not Working GPS records")
-                                    
-                                    # Show preview of uploaded data
-                                    st.subheader("📋 Preview of Uploaded Data")
-                                    st.dataframe(upload_df.head(10), use_container_width=True)
-                                    
-                                else:
-                                    st.error(f"❌ {message}")
-                                    
-                            except json.JSONDecodeError:
-                                st.error("❌ Invalid JSON file. Please upload a valid Service Account credentials file.")
-                            except Exception as e:
-                                st.error(f"❌ Error uploading to Google Sheets: {str(e)}")
-                                st.error(traceback.format_exc())
-        
         # Email Section with Gmail Support
         if st.session_state.data_loaded and not st.session_state.combined_df.empty:
             st.markdown("---")
@@ -1385,8 +1231,7 @@ def main():
         2. Click **Process Data** to generate the report
         3. View **Dashboards**, **Data Tables**, and **Analytics**
         4. **Download** the Excel report
-        5. **Upload to Google Sheets** with one click
-        6. **Send Email** to your manager with the report via Gmail
+        5. **Send Email** to your manager with the report via Gmail
         
         ### Required Files:
         - 📍 GPS Status File (.xlsx or .xlsm)
@@ -1395,13 +1240,6 @@ def main():
         
         ### Optional Files:
         - 📝 GPS Remarks (.csv) - Adds remarks and user information
-        - 🔑 Service Account JSON - For Google Sheets upload
-        
-        ### Google Sheets Upload:
-        - Upload your Service Account JSON credentials
-        - Sheet name: "GPS Not Working"
-        - Sheet index: 2 (third sheet)
-        - Automatically uploads only Not Working GPS data
         
         ### Email Setup:
         - Uses Gmail SMTP (smtp.gmail.com:587)
