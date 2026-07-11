@@ -20,7 +20,7 @@ from openpyxl.utils import get_column_letter
 # Set page config
 st.set_page_config(
     page_title="GPS & KPI Monitoring Dashboard",
-    page_icon="logosumeet.jpeg",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
