@@ -177,7 +177,10 @@ class KPIDataProcessor:
             
             not_working = not_working[['Date', 'GPS IMEI No.', 'Vehicle Number', 'V Id', 'Vehicle Type', 
                                       'Last Log Received At', 'Age', 'Status', 'Kpi Source']]
-            
+            if 'Last Log Received At' in not_working.columns:
+                not_working['Last Log Received At'] = pd.to_datetime(
+                    not_working['Last Log Received At'], errors='coerce', dayfirst=True
+                ).dt.strftime('%d-%m-%Y')
             # Process remarks if available
             if remarks_file:
                 remarks_df = self.process_gps_remarks(remarks_file)
