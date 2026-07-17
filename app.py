@@ -181,6 +181,8 @@ class KPIDataProcessor:
                 not_working['Last Log Received At'] = pd.to_datetime(
                     not_working['Last Log Received At'], errors='coerce', dayfirst=True
                 ).dt.strftime('%d-%m-%Y')
+
+            df['Last Log Received At'] = df['Last Log Received At'].astype(int)
             # Process remarks if available
             if remarks_file:
                 remarks_df = self.process_gps_remarks(remarks_file)
