@@ -13,7 +13,7 @@ import base64
 # Set page config
 st.set_page_config(
     page_title="GPS & KPI Monitoring Dashboard",
-    page_icon="🚛",
+    page_icon="logosumeet.jpeg",
     layout="wide",
     initial_sidebar_state="expanded"
 )
